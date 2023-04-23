@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net6.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Recognizers.Text.DateTime" Version="1.8.6" />
+    <PackageReference Include="Stanford.NLP.CoreNLP" Version="4.5.0" />
+  </ItemGroup>
+
+</Project>
