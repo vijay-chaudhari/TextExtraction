@@ -13,6 +13,11 @@ Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "OCR", "OCR\OCR.csproj", "{7
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Pdf-To-ImageStream", "Pdf-To-ImageStream\Pdf-To-ImageStream.csproj", "{92EAD41A-EA9F-4EE5-A051-77B847777A2E}"
 EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Depedencies", "Depedencies", "{41E81031-0334-4E85-AC6B-5BD7113AFC2B}"
+	ProjectSection(SolutionItems) = preProject
+		..\..\..\Downloads\gs1000w64.exe = ..\..\..\Downloads\gs1000w64.exe
+	EndProjectSection
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -43,6 +48,7 @@ Global
 		{27AD417A-2786-4D85-BA1A-2F7B79C5006D} = {B024E513-C33A-48F6-BFF4-F5685C5B69A0}
 		{7A2CB382-937E-4938-8E92-6277AECB9CA4} = {B024E513-C33A-48F6-BFF4-F5685C5B69A0}
 		{92EAD41A-EA9F-4EE5-A051-77B847777A2E} = {B024E513-C33A-48F6-BFF4-F5685C5B69A0}
+		{41E81031-0334-4E85-AC6B-5BD7113AFC2B} = {B024E513-C33A-48F6-BFF4-F5685C5B69A0}
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
 		SolutionGuid = {24D89CDD-3DD2-4B23-9E7D-F463F3A8A248}
