@@ -1,8 +1,6 @@
-﻿
-using Microsoft.EntityFrameworkCore;
-using System.ComponentModel.DataAnnotations;
-using System.ComponentModel.DataAnnotations.Schema;
-using Volo.Abp.Domain.Entities;
+﻿using System.ComponentModel.DataAnnotations.Schema;
+using System.Drawing;
+using Tesseract;
 using Volo.Abp.Domain.Entities.Auditing;
 
 namespace TextExtraction.Model
@@ -15,33 +13,39 @@ namespace TextExtraction.Model
         public string OCRText { get; set; }
         public string Confidence { get; set; }
         public string Output { get; set; }
-       
+
     }
 
     public class TextExtractionFields
     {
-        //public string Name { get; set; }
-        //public string BirthDate { get; set; }
-        //public string Invoice { get; set; }
-        //public string InvoiceDate { get; set; }
-        //public string InvoiceDueDate { get; set; }
-        //public string OrderNumber { get; set; }
-        //public string TotalAmount { get; set; }
-        //public string TaxAmount { get; set; }
-        //public string VendorName { get; set; }
+        public Patient Patient { get; set; }
         public Invoice Invoice { get; set; }
         public TextExtractionFields()
         {
             Invoice = new();
+            Patient = new();
         }
     }
 
+    #region Patient Details Model
+    public class Patient
+    {
+        public string Name { get; set; }
+        public string BirthDate { get; set; }
+    }
+    #endregion
+
+    #region Invoice Processing Models
     public class Invoice
     {
         public string Number { get; set; }
+        public Rectangle InvNumCords { get; set; }
         public string Date { get; set; }
+        public Rectangle InvDateCords { get; set; }
         public string OrderDate { get; set; }
+        public Rectangle OrderDateCords { get; set; }
         public string PurchaseOrderNumber { get; set; }
+        public Rectangle PurchaseOrderNumCords { get; set; }
         public string Currency { get; set; }
         public Supplier Supplier { get; set; }
         public Customer Customer { get; set; }
@@ -57,6 +61,7 @@ namespace TextExtraction.Model
     public class Supplier
     {
         public string CompanyName { get; set; }
+        public Rectangle VendorNameCord { get; set; }
         public string Address { get; set; }
         public string BusinessNumber { get; set; }
         public string PhoneNumber { get; set; }
@@ -83,9 +88,62 @@ namespace TextExtraction.Model
         public string DueDate { get; set; }
         public string BaseAmount { get; set; }
         public string Tax { get; set; }
+        public Rectangle TaxCord { get; set; }
         public string Total { get; set; }
+        public Rectangle TotalCord { get; set; }
         public string Paid { get; set; }
         public string DueAmount { get; set; }
         public string PaymentReference { get; set; }
     }
+    #endregion
+
+    #region Text Extraction with Coords
+    public class ProcessedPdf
+    {
+        public Guid DocumentId { get; set; }
+        public string FileName { get; set; }
+        public float Confidence { get; set; }
+        public List<PageData> Pages { get; set; }
+        public ProcessedPdf()
+        {
+            Pages = new();
+        }
+    }
+    public class PageData
+    {
+        public int PageNumber { get; set; }
+        public List<LineData> Lines { get; set; }
+        public PageData()
+        {
+            Lines = new();
+        }
+    }
+    public class LineData
+    {
+        public int LineNumber { get; set; }
+        public Rect LineCoordinates { get; set; }
+        public string Text { get; set; }
+        public List<WordData> Words { get; set; }
+        public LineData()
+        {
+            Words = new();
+        }
+    }
+    public class WordData
+    {
+        public string Text { get; set; }
+        public Tesseract.Rect Coordinates { get; set; }
+    }
+    public class DrawCoordinates
+    {
+        public int PageNumber { get; set; }
+        public List<Rect> Rects { get; set; }
+        public DrawCoordinates()
+        {
+            Rects = new();
+        }
+
+    }
+    #endregion
+
 }

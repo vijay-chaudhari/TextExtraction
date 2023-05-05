@@ -55,7 +55,7 @@ namespace NameRecognizer
                 var classifiersDirectory = enginePath + @"\classifiers";
 
                 // Loading 3 class classifier model
-                var classifier = CRFClassifier.getClassifierNoExceptions(classifiersDirectory + @"\english.muc.7class.distsim.crf.ser.gz");
+                var classifier = CRFClassifier.getClassifierNoExceptions(classifiersDirectory + @"\english.all.3class.distsim.crf.ser.gz");
                 return classifier;
             }
             catch (Exception)

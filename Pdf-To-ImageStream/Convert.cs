@@ -1,6 +1,5 @@
 ﻿using Ghostscript.NET;
 using Ghostscript.NET.Rasterizer;
-using Microsoft.Extensions.Logging;
 using System.Drawing.Imaging;
 
 namespace Pdf_To_ImageStream

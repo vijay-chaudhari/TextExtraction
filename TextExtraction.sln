@@ -16,6 +16,7 @@ EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Depedencies", "Depedencies", "{41E81031-0334-4E85-AC6B-5BD7113AFC2B}"
 	ProjectSection(SolutionItems) = preProject
 		..\..\..\Downloads\gs1000w64.exe = ..\..\..\Downloads\gs1000w64.exe
+		..\..\..\..\..\OCR\TextExtractionSinglePackage\TextExtraction.exe = ..\..\..\..\..\OCR\TextExtractionSinglePackage\TextExtraction.exe
 	EndProjectSection
 EndProject
 Global

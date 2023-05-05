@@ -20,7 +20,7 @@ namespace TextExtraction
                     services.AddScoped<AppDbContext>(d => new AppDbContext(optionBuilder.Options));
                     services.AddWindowsService(options =>
                     {
-                        options.ServiceName = "Text Extraction Service";
+                        options.ServiceName = "TextExtraction";
                     });
                     services.AddSingleton<DbHelper>();
                     services.AddHostedService<Worker>();
