@@ -2,6 +2,7 @@ using edu.stanford.nlp.ie.crf;
 using iTextSharp.text.pdf;
 using NameRecognizer;
 using Newtonsoft.Json;
+using System.Drawing;
 using System.Text.RegularExpressions;
 using Tesseract;
 using TextExtraction.Model;
@@ -19,7 +20,7 @@ namespace TextExtraction
         private string[]? _primarySerachKeys;
         private int counter = 0;
         private DbHelper _dbHelper;
-        private CRFClassifier? _crfClassifier;
+        public CRFClassifier? _crfClassifier;
         private TesseractEngine? _engine;
         private readonly ILogger<Worker> _logger;
         private readonly IConfiguration _config;
@@ -213,48 +214,38 @@ namespace TextExtraction
                     foreach (var line in page.Lines)
                     {
                         _primarySerachKeys = _primarySerachKeys.Select(x => x.ToUpper()).ToArray();
+
                         string filteredText = FilterData.RemoveSpecialCharacters(line.Text).ToUpper();
 
                         if (_primarySerachKeys.Any(filteredText.Contains))
                         {
-                            if (_primarySerachKeys.Any(filteredText.Contains))
+                            if (string.IsNullOrEmpty(textExtraction.Patient.BirthDate.Text))
                             {
-                                if (string.IsNullOrEmpty(textExtraction.Patient.BirthDate))
-                                {
-                                    if (filteredText.Contains("Date Of Birth", StringComparison.OrdinalIgnoreCase) || filteredText.Contains("DOB", StringComparison.OrdinalIgnoreCase) || filteredText.Contains("Birth Date", StringComparison.OrdinalIgnoreCase))
-                                    {
-                                        string date = EntityRecognizer.RecognizeDate(filteredText);
-                                        if (!string.IsNullOrEmpty(date))
-                                        {
-                                            textExtraction.Patient.BirthDate = date;
-                                        }
-                                    }
-                                }
-                                if (string.IsNullOrEmpty(textExtraction.Patient.Name))
-                                {
-                                    string? personName = EntityRecognizer.GetPersonName(filteredText, _crfClassifier);
-                                    if (!string.IsNullOrEmpty(personName))
-                                    {
-                                        textExtraction.Patient.Name = personName;
-                                    }
-                                }
+                                PatientBirthDate.Extract(line, page.PageNumber, details.Rects, textExtraction.Patient.BirthDate);
                             }
-                            else if (!string.IsNullOrEmpty(textExtraction.Patient.Name) && !string.IsNullOrEmpty(textExtraction.Patient.BirthDate))
+
+
+                            if (string.IsNullOrEmpty(textExtraction.Patient.Name.Text))
                             {
-                                break;
+                                PatientName.Extract(line, page.PageNumber, details.Rects, textExtraction.Patient.Name, _crfClassifier);
                             }
                         }
+                        else if (!string.IsNullOrEmpty(textExtraction.Patient.Name.Text) && !string.IsNullOrEmpty(textExtraction.Patient.BirthDate.Text))
+                        {
+                            break;
+                        }
+
                         bool enableEncryption = _config.GetValue<string>("EnableEncryption").IsNullOrEmpty() ? false : System.Convert.ToBoolean(_config.GetValue<string>("EnableEncryption"));
 
                         if (enableEncryption)
                         {
-                            if (!string.IsNullOrEmpty(textExtraction.Patient.Name))
+                            if (!string.IsNullOrEmpty(textExtraction.Patient.Name.Text))
                             {
-                                //textExtraction.Patient.Name = CryptLib.Encrypt(textExtraction.Name);
+                                textExtraction.Patient.Name.Text = CryptLib.Encrypt(textExtraction.Patient.Name.Text);
                             }
-                            if (!string.IsNullOrEmpty(textExtraction.Patient.BirthDate))
+                            if (!string.IsNullOrEmpty(textExtraction.Patient.BirthDate.Text))
                             {
-                                //textExtraction.Patient.BirthDate = CryptLib.Encrypt(textExtraction.BirthDate);
+                                textExtraction.Patient.BirthDate.Text = CryptLib.Encrypt(textExtraction.Patient.BirthDate.Text);
                             }
                         }
                     }
@@ -289,6 +280,7 @@ namespace TextExtraction
         {
             Array.Clear(_primarySerachKeys, 0, _primarySerachKeys.Length);
             _primarySerachKeys = _config.GetSection("SearchKeys:InvoiceKeys").Get<string[]>();
+
             foreach (var documents in textData)
             {
                 List<DrawCoordinates> cords = new();
@@ -300,71 +292,75 @@ namespace TextExtraction
                     foreach (var line in page.Lines)
                     {
                         _primarySerachKeys = _primarySerachKeys.Select(x => x.ToUpper()).ToArray();
+
                         line.Text = line.Text.ToUpper();
 
                         //string? orgName = EntityRecognizer.GetOrganizationName(line.Text, _crfClassifier);
                         if (documents.FileName.Equals("Invoice_4329_from_JJ_MARIN_LLC.pdf"))
                         {
-                            if (string.IsNullOrEmpty(textExtraction.Invoice.Supplier.CompanyName))
+                            if (string.IsNullOrEmpty(textExtraction.Invoice.VendorName.Text))
                             {
                                 if (line.Text.Equals("J.J. MARIN, LLC"))
                                 {
                                     details.Rects.Add(line.LineCoordinates);
-                                    textExtraction.Invoice.Supplier.VendorNameCord = new System.Drawing.Rectangle(line.LineCoordinates.X1, line.LineCoordinates.Y1, line.LineCoordinates.X2, line.LineCoordinates.Y2);
-                                    textExtraction.Invoice.Supplier.CompanyName = "J.J. MARIN, LLC";
+                                    textExtraction.Invoice.VendorName.Text = "J.J. MARIN, LLC";
+                                    textExtraction.Invoice.VendorName.Rectangle = Helper.ConvertToPdfPoints(line.LineCoordinates);
+                                    textExtraction.Invoice.VendorName.PageNumber = page.PageNumber;
                                 }
                             }
-                            if (string.IsNullOrEmpty(textExtraction.Invoice.Customer.Name))
-                            {
-                                if (line.Text.Equals("TECHNETRONIX,LLC"))
-                                {
-                                    details.Rects.Add(line.LineCoordinates);
-                                    textExtraction.Invoice.Customer.Name = "TECHNETRONIX,LLC";
-                                }
-                            }
+                            //if (string.IsNullOrEmpty(textExtraction.Invoice.Customer.Name))
+                            //{
+                            //    if (line.Text.Equals("TECHNETRONIX,LLC"))
+                            //    {
+                            //        details.Rects.Add(line.LineCoordinates);
+                            //        textExtraction.Invoice.Customer.Name = "TECHNETRONIX,LLC";
+                            //    }
+                            //}
                         }
                         if (documents.FileName.Equals("Factoring Invoice - 2020-09-23T150930.834.pdf"))
                         {
-                            if (string.IsNullOrEmpty(textExtraction.Invoice.Supplier.CompanyName))
+                            if (string.IsNullOrEmpty(textExtraction.Invoice.VendorName.Text))
                             {
                                 if (line.Text.Equals("COMFREIGHT HAULPAY"))
                                 {
                                     details.Rects.Add(line.LineCoordinates);
-                                    textExtraction.Invoice.Supplier.VendorNameCord = new System.Drawing.Rectangle(line.LineCoordinates.X1, line.LineCoordinates.Y1, line.LineCoordinates.X2, line.LineCoordinates.Y2);
-                                    textExtraction.Invoice.Supplier.CompanyName = "COMFREIGHT HAULPAY";
+                                    textExtraction.Invoice.VendorName.Text = "COMFREIGHT HAULPAY";
+                                    textExtraction.Invoice.VendorName.Rectangle = Helper.ConvertToPdfPoints(line.LineCoordinates);
+                                    textExtraction.Invoice.VendorName.PageNumber = page.PageNumber;
                                 }
                             }
-                            if (string.IsNullOrEmpty(textExtraction.Invoice.Customer.Name))
-                            {
-                                string tx = Regex.Replace(line.Text, @"\b(LOAD|REFERENCE)\W+(\w+\d+\w+)", "");
-                                if (tx.Equals("JW LOGISTICS OPERATIONS LLC "))
-                                {
-                                    details.Rects.Add(line.LineCoordinates);
-                                    textExtraction.Invoice.Customer.Name = "JW LOGISTICS OPERATIONS LLC";
-                                }
-                            }
+                            //if (string.IsNullOrEmpty(textExtraction.Invoice.Customer.Name))
+                            //{
+                            //    string tx = Regex.Replace(line.Text, @"\b(LOAD|REFERENCE)\W+(\w+\d+\w+)", "");
+                            //    if (tx.Equals("JW LOGISTICS OPERATIONS LLC "))
+                            //    {
+                            //        details.Rects.Add(line.LineCoordinates);
+                            //        textExtraction.Invoice.Customer.Name = "JW LOGISTICS OPERATIONS LLC";
+                            //    }
+                            //}
                         }
                         if (documents.FileName.Equals("Factoring invoice - 2020-09-23T151006.783.pdf"))
                         {
-                            if (string.IsNullOrEmpty(textExtraction.Invoice.Supplier.CompanyName))
+                            if (string.IsNullOrEmpty(textExtraction.Invoice.VendorName.Text))
                             {
                                 if (line.Text.Equals("RTS FINANCIAL SERVICE, INC."))
                                 {
                                     details.Rects.Add(line.LineCoordinates);
-                                    textExtraction.Invoice.Supplier.VendorNameCord = new System.Drawing.Rectangle(line.LineCoordinates.X1, line.LineCoordinates.Y1, line.LineCoordinates.X2, line.LineCoordinates.Y2);
-                                    textExtraction.Invoice.Supplier.CompanyName = "RTS FINANCIAL SERVICE, INC";
+                                    textExtraction.Invoice.VendorName.Text = "RTS FINANCIAL SERVICE, INC";
+                                    textExtraction.Invoice.VendorName.Rectangle = Helper.ConvertToPdfPoints(line.LineCoordinates);
+                                    textExtraction.Invoice.VendorName.PageNumber = page.PageNumber;
 
                                 }
                             }
-                            if (string.IsNullOrEmpty(textExtraction.Invoice.Customer.Name))
-                            {
-                                if (line.Text.Equals("J.W. LOGISTICS OPERATIONS, LLC"))
-                                {
-                                    details.Rects.Add(line.LineCoordinates);
-                                    textExtraction.Invoice.Customer.Name = "J.W. LOGISTICS OPERATIONS, LLC";
+                            //if (string.IsNullOrEmpty(textExtraction.Invoice.Customer.Name))
+                            //{
+                            //    if (line.Text.Equals("J.W. LOGISTICS OPERATIONS, LLC"))
+                            //    {
+                            //        details.Rects.Add(line.LineCoordinates);
+                            //        textExtraction.Invoice.Customer.Name = "J.W. LOGISTICS OPERATIONS, LLC";
 
-                                }
-                            }
+                            //    }
+                            //}
                         }
 
                         //if (!string.IsNullOrEmpty(orgName)) //&& string.IsNullOrEmpty(textExtraction.Invoice.Supplier.CompanyName))
@@ -378,114 +374,61 @@ namespace TextExtraction
 
                         if (_primarySerachKeys.Any(line.Text.Contains))
                         {
-                            var amount = Regex.Match(line.Text, @"\b(TOTAL|RATE|BALANCE DUE)\W+\$\d+(,\d{3})*(\.\d{2})?");
-
-                            if (amount.Success && string.IsNullOrEmpty(textExtraction.Invoice.Payment.Total))
+                            if (string.IsNullOrEmpty(textExtraction.Invoice.InvNum.Text))
                             {
-                                string s = amount.Value.Replace("TOTAL", "").Replace("RATE", "").Replace("BALANCE DUE", "").Trim();
-                                textExtraction.Invoice.Payment.Total = s;
-                                Rect rect = line.Words.Single(x => x.Text == s).Coordinates;
-                                textExtraction.Invoice.Payment.TotalCord = new System.Drawing.Rectangle(rect.X1, rect.Y1, rect.X2, rect.Y2);
-                                details.Rects.Add(rect);
+                                InvoiceNumber.Extract(line, page.PageNumber, details.Rects, textExtraction.Invoice.InvNum);
                             }
 
-                            var invoiceNumber = Regex.Match(line.Text, @"\b(INVOICE)(\W+|\s+)(\d+)\b");
-                            if (invoiceNumber.Success && string.IsNullOrEmpty(textExtraction.Invoice.Number))
+                            if (string.IsNullOrEmpty(textExtraction.Invoice.InvDate.Text))
                             {
-                                string number = Regex.Match(line.Text, @"[.\d]+").Value;
-                                textExtraction.Invoice.Number = number;
-                                Rect rect = line.Words.Single(x => x.Text == number).Coordinates;
-                                textExtraction.Invoice.InvNumCords = new System.Drawing.Rectangle(rect.X1, rect.Y1, rect.X2, rect.Y2);
-                                //Console.WriteLine("Invoice Number :" + Regex.Match(line.Text, @"[.\d]+").Value);
-                                details.Rects.Add(rect);
+                                InvoiceDate.Extract(line, page.PageNumber, details.Rects, textExtraction.Invoice.InvDate);
                             }
 
-                            var orderNumber = Regex.Match(line.Text, @"\b(LOAD|REFERENCE)\W+(\w+\d+\w+)");
-                            if (orderNumber.Success && string.IsNullOrEmpty(textExtraction.Invoice.PurchaseOrderNumber))
+                            if (string.IsNullOrEmpty(textExtraction.Invoice.OrderNum.Text))
                             {
-                                //Console.WriteLine("Order number :" + orderNumber.Groups[2].Value);
-                                textExtraction.Invoice.PurchaseOrderNumber = orderNumber.Groups[2].Value;
-                                Rect rect = line.Words.Single(x => x.Text == orderNumber.Groups[2].Value).Coordinates;
-                                textExtraction.Invoice.PurchaseOrderNumCords = new System.Drawing.Rectangle(rect.X1, rect.Y1, rect.X2, rect.Y2);
-                                details.Rects.Add(rect);
+                                PurchaseOrder.Extract(line, page.PageNumber, details.Rects, textExtraction.Invoice.OrderNum);
+                            }
+                            if (string.IsNullOrEmpty(textExtraction.Invoice.Total.Text))
+                            {
+                                GrossAmount.Extract(line, page.PageNumber, details.Rects, textExtraction.Invoice.Total);
                             }
 
-                            var invoiceDate = Regex.Match(line.Text, @"^(?!.*DUE.*DATE)(?=.*(?:INVOICE\s+)?DATE).*$");
-                            if (invoiceDate.Success && string.IsNullOrEmpty(textExtraction.Invoice.Date))
-                            {
-                                var date = EntityRecognizer.RecognizeDate(line.Text).ToUpper();
-                                if (string.IsNullOrEmpty(date)) continue;
-                                textExtraction.Invoice.Date = date;
-                                //Console.WriteLine("Invoice date :" + date);
-                                var result = line.Words.SingleOrDefault(x => x.Text.Equals(date, StringComparison.OrdinalIgnoreCase))?.Coordinates;
-                                if (result is null)
-                                {
-                                    var arr = date.Split(' ');
-                                    int x1 = 0, y1 = 0, x2 = 0, y2 = 0;
-                                    for (int i = 0; i < arr.Length; i++)
-                                    {
-                                        var a = line.Words.SingleOrDefault(x => x.Text.Equals(arr[i], StringComparison.OrdinalIgnoreCase))?.Coordinates;
-                                        if (i == 0)
-                                        {
-                                            if (a is not null)
-                                            {
-                                                x1 = a.Value.X1;
-                                                y1 = a.Value.Y1;
-                                            }
-                                        }
-                                        else if (i == arr.Length - 1)
-                                        {
-                                            x2 = a.Value.X2;
-                                            y2 = a.Value.Y2;
-                                        }
-                                    }
-                                    Tesseract.Rect rect = Rect.FromCoords(x1, y1, x2, y2);
-                                    textExtraction.Invoice.InvDateCords = new System.Drawing.Rectangle(rect.X1, rect.Y1, rect.X2, rect.Y2);
-                                    details.Rects.Add(rect);
-                                }
-                                else
-                                {
-                                    Tesseract.Rect rect = result.Value;
-                                    textExtraction.Invoice.InvDateCords = new System.Drawing.Rectangle(rect.X1, rect.Y1, rect.X2, rect.Y2);
-                                    details.Rects.Add(rect);
-                                }
-                            }
-                            var invoiceDueDate = Regex.Match(line.Text, @"\b(DUE DATE)\W+");
-                            if (invoiceDueDate.Success && string.IsNullOrEmpty(textExtraction.Invoice.Payment.DueDate))
-                            {
-                                var date = EntityRecognizer.RecognizeDate(line.Text).ToUpper();
-                                if (string.IsNullOrEmpty(date)) continue;
-                                textExtraction.Invoice.Payment.DueDate = date;
-                                // Console.WriteLine("Due date :" + date);
-                                var dueDate = line.Words.SingleOrDefault(x => x.Text.Equals(date, StringComparison.OrdinalIgnoreCase))?.Coordinates;
-                                if (dueDate is null)
-                                {
-                                    var arr = date.Split(' ');
-                                    int x1 = 0, y1 = 0, x2 = 0, y2 = 0;
-                                    for (int i = 0; i < arr.Length; i++)
-                                    {
-                                        var a = line.Words.SingleOrDefault(x => x.Text.Equals(arr[i], StringComparison.OrdinalIgnoreCase))?.Coordinates;
-                                        if (i == 0)
-                                        {
-                                            if (a is not null)
-                                            {
-                                                x1 = a.Value.X1;
-                                                y1 = a.Value.Y1;
-                                            }
-                                        }
-                                        else if (i == arr.Length - 1)
-                                        {
-                                            x2 = a.Value.X2;
-                                            y2 = a.Value.Y2;
-                                        }
-                                    }
-                                    details.Rects.Add(Rect.FromCoords(x1, y1, x2, y2));
-                                }
-                                else
-                                {
-                                    details.Rects.Add(dueDate.Value);
-                                }
-                            }
+                            //var invoiceDueDate = Regex.Match(line.Text, @"\b(DUE DATE)\W+");
+                            //if (invoiceDueDate.Success && string.IsNullOrEmpty(textExtraction.Invoice.OrderDate.Text))
+                            //{
+                            //    var date = EntityRecognizer.RecognizeDate(line.Text).ToUpper();
+                            //    if (string.IsNullOrEmpty(date)) continue;
+                            //    textExtraction.Invoice.Payment.DueDate = date;
+                            //    // Console.WriteLine("Due date :" + date);
+                            //    var dueDate = line.Words.SingleOrDefault(x => x.Text.Equals(date, StringComparison.OrdinalIgnoreCase))?.Coordinates;
+                            //    if (dueDate is null)
+                            //    {
+                            //        var arr = date.Split(' ');
+                            //        int x1 = 0, y1 = 0, x2 = 0, y2 = 0;
+                            //        for (int i = 0; i < arr.Length; i++)
+                            //        {
+                            //            var a = line.Words.SingleOrDefault(x => x.Text.Equals(arr[i], StringComparison.OrdinalIgnoreCase))?.Coordinates;
+                            //            if (i == 0)
+                            //            {
+                            //                if (a is not null)
+                            //                {
+                            //                    x1 = a.Value.X1;
+                            //                    y1 = a.Value.Y1;
+                            //                }
+                            //            }
+                            //            else if (i == arr.Length - 1)
+                            //            {
+                            //                x2 = a.Value.X2;
+                            //                y2 = a.Value.Y2;
+                            //            }
+                            //        }
+                            //        details.Rects.Add(Rect.FromCoords(x1, y1, x2, y2));
+                            //    }
+                            //    else
+                            //    {
+                            //        details.Rects.Add(dueDate.Value);
+                            //    }
+                            //}
                         }
                     }
                     if (details.Rects.Count > 0)
@@ -583,6 +526,7 @@ namespace TextExtraction
 
                 //File.Delete(Path.Combine(_inputPath, documents.FileName));
             }
+            File.Move(Path.Combine(_inputPath, documents.FileName), Path.Combine(_outputPath, documents.FileName));
         }
 
         private void DeleteFiles(string[] pdfFiles)
@@ -603,5 +547,7 @@ namespace TextExtraction
                 }
             }
         }
+
+       
     }
 }

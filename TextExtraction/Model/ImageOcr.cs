@@ -30,32 +30,61 @@ namespace TextExtraction.Model
     #region Patient Details Model
     public class Patient
     {
-        public string Name { get; set; }
-        public string BirthDate { get; set; }
+
+        public PatientName Name { get; set; }
+        public PatientBirthDate BirthDate { get; set; }
+        public Patient()
+        {
+            Name = new();
+            BirthDate = new();
+
+        }
+        //public string Name { get; set; }
+        //public string BirthDate { get; set; }
     }
     #endregion
 
     #region Invoice Processing Models
     public class Invoice
     {
-        public string Number { get; set; }
-        public Rectangle InvNumCords { get; set; }
-        public string Date { get; set; }
-        public Rectangle InvDateCords { get; set; }
-        public string OrderDate { get; set; }
-        public Rectangle OrderDateCords { get; set; }
-        public string PurchaseOrderNumber { get; set; }
-        public Rectangle PurchaseOrderNumCords { get; set; }
-        public string Currency { get; set; }
-        public Supplier Supplier { get; set; }
-        public Customer Customer { get; set; }
-        public Payment Payment { get; set; }
+        public InvoiceNumber InvNum { get; set; }
+        public InvoiceDate InvDate { get; set; }
+        public PurchaseOrder OrderNum { get; set; }
+        public PurchaseOrderDate OrderDate { get; set; }
+        public VendorName VendorName { get; set; }
+        public Tax Tax { get; set; }
+        public GrossAmount Total { get; set; }
+
         public Invoice()
         {
-            Supplier = new();
-            Customer = new();
-            Payment = new();
+            InvNum = new();
+            InvDate = new();
+            OrderNum = new();
+            OrderDate = new();
+            VendorName = new();
+            Tax = new();
+            Total = new();
         }
+
+
+        //public string Number { get; set; }
+        //public Rectangle InvNumCords { get; set; }
+        //public string Date { get; set; }
+        //public Rectangle InvDateCords { get; set; }
+        //public string OrderDate { get; set; }
+        //public Rectangle OrderDateCords { get; set; }
+        //public string PurchaseOrderNumber { get; set; }
+        //public Rectangle PurchaseOrderNumCords { get; set; }
+        //public string Currency { get; set; }
+        //public Supplier Supplier { get; set; }
+        //public Customer Customer { get; set; }
+        //public Payment Payment { get; set; }
+        //public Invoice()
+        //{
+        //    Supplier = new();
+        //    Customer = new();
+        //    Payment = new();
+        //}
     }
 
     public class Supplier
