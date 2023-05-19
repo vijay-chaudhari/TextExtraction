@@ -2,9 +2,11 @@ using edu.stanford.nlp.ie.crf;
 using iTextSharp.text.pdf;
 using NameRecognizer;
 using Newtonsoft.Json;
-using System.Drawing;
+using System.Reflection;
+using System.Reflection.Emit;
 using System.Text.RegularExpressions;
 using Tesseract;
+using TextExtraction.Dynamic;
 using TextExtraction.Model;
 using TextExtraction.Services;
 using Exception = System.Exception;
@@ -24,6 +26,7 @@ namespace TextExtraction
         private TesseractEngine? _engine;
         private readonly ILogger<Worker> _logger;
         private readonly IConfiguration _config;
+        private  ConfigurationSettings _template;
 
         public Worker(ILogger<Worker> logger, IConfiguration config, DbHelper dbHelper)
         {
@@ -63,6 +66,47 @@ namespace TextExtraction
             try
             {
                 bool extractPatientDetails = _config.GetValue<string>("ExtractPatientDetails").IsNullOrEmpty() ? false : System.Convert.ToBoolean(_config.GetValue<string>("ExtractPatientDetails"));
+                string temaplateId = _config.GetValue<string>("TemaplateId").IsNullOrEmpty() ? "" : _config.GetValue<string>("TemaplateId");
+
+                //_template = GetTemplate(temaplateId);
+                //if (_template is null)
+                //{
+                //    _logger.LogError("No Template found in database for TemplateId {temaplateId}", temaplateId);
+                //   // return false;
+                //}
+
+                List<FieldModel> fieldModels = new List<FieldModel>();
+
+                FieldModel fieldModel = new FieldModel
+                {
+                    FieldName = "CustName",
+                    RegExpression = @"\b(INVOICE)(\W+|\s+)(\d+)\b",
+                    CoOrdinates = "158.97, 128.77, 177.56, 135.17"
+                };
+                FieldModel fieldModel1 = new FieldModel
+                {
+                    FieldName = "PayementRef",
+                    RegExpression = @"^(?!.*DUE.*DATE)(?=.*(?:INVOICE\s+)?DATE).*$",
+                    CoOrdinates = "161.28,143.04001,190.56001,146.40001"
+                };
+                FieldModel fieldModel2 = new FieldModel
+                {
+                    FieldName = "PaymentDueDate",
+                    RegExpression = @"^(?!.*DUE.*DATE)(?=.*(?:INVOICE\s+)?DATE).*$",
+                    CoOrdinates = "161.28,143.04001,190.56001,146.40001"
+                };
+               
+                fieldModels.Add(fieldModel);
+                fieldModels.Add(fieldModel1);
+                fieldModels.Add(fieldModel2);
+
+                _template = new ConfigurationSettings
+                {
+                    TemplateId = Guid.NewGuid(),
+                    TemplateName = "Invoice",
+                    Fields = fieldModels
+                };
+
 
                 if (extractPatientDetails)
                 {
@@ -85,6 +129,7 @@ namespace TextExtraction
                     _logger.LogInformation("OCR Engine Initialize successfully on {time}", DateTimeOffset.Now);
                     return true;
                 }
+
                 return false;
             }
             catch (Exception ex)
@@ -200,9 +245,6 @@ namespace TextExtraction
         }
         private void ExtractMedicalData(List<ProcessedPdf> textData)
         {
-            Array.Clear(_primarySerachKeys, 0, _primarySerachKeys.Length);
-            _primarySerachKeys = _config.GetSection("SearchKeys:PatientKeys").Get<string[]>();
-
             foreach (var documents in textData)
             {
                 List<DrawCoordinates> cords = new();
@@ -213,8 +255,6 @@ namespace TextExtraction
                     var details = new DrawCoordinates { PageNumber = page.PageNumber };
                     foreach (var line in page.Lines)
                     {
-                        _primarySerachKeys = _primarySerachKeys.Select(x => x.ToUpper()).ToArray();
-
                         string filteredText = FilterData.RemoveSpecialCharacters(line.Text).ToUpper();
 
                         if (_primarySerachKeys.Any(filteredText.Contains))
@@ -286,6 +326,11 @@ namespace TextExtraction
                 List<DrawCoordinates> cords = new();
                 TextExtractionFields textExtraction = new TextExtractionFields();
 
+                foreach (var addField in _template.Fields)
+                {
+                    var newProp = GetObject(addField.FieldName);
+                    textExtraction.Invoice.AdditionalFields.Add(newProp);
+                }
                 foreach (var page in documents.Pages)
                 {
                     var details = new DrawCoordinates { PageNumber = page.PageNumber };
@@ -295,6 +340,7 @@ namespace TextExtraction
 
                         line.Text = line.Text.ToUpper();
 
+                        #region Jugad code may be delete later
                         //string? orgName = EntityRecognizer.GetOrganizationName(line.Text, _crfClassifier);
                         if (documents.FileName.Equals("Invoice_4329_from_JJ_MARIN_LLC.pdf"))
                         {
@@ -370,7 +416,8 @@ namespace TextExtraction
                         //    {
                         //        textExtraction.Invoice.Supplier.CompanyName = orgName;
                         //    } 
-                        //}
+                        //} 
+                        #endregion
 
                         if (_primarySerachKeys.Any(line.Text.Contains))
                         {
@@ -388,11 +435,34 @@ namespace TextExtraction
                             {
                                 PurchaseOrder.Extract(line, page.PageNumber, details.Rects, textExtraction.Invoice.OrderNum);
                             }
+
                             if (string.IsNullOrEmpty(textExtraction.Invoice.Total.Text))
                             {
                                 GrossAmount.Extract(line, page.PageNumber, details.Rects, textExtraction.Invoice.Total);
                             }
 
+                            foreach (var newField in textExtraction.Invoice.AdditionalFields)
+                            {
+                                string prop = GetProperty(newField, "Text");
+                                if (string.IsNullOrEmpty(prop))
+                                {
+                                    string fieldName = GetProperty(newField, "FieldName");
+                                    string regex = _template.Fields.FirstOrDefault(x => x.FieldName.Equals(fieldName)).RegExpression;
+                                    var additionalFields = Regex.Match(line.Text, regex);
+                                    if (additionalFields.Success)
+                                    {
+                                        SetProperty(newField, "Text", additionalFields.Value);
+                                        //Rect rect = line.Words.Single(x => x.Text == additionalFields.Value).Coordinates;
+                                        string rectangle = Helper.ConvertToPdfPoints(line.LineCoordinates);
+                                        SetProperty(newField, "Rectangle", rectangle);
+                                        SetProperty(newField, "PageNumber", page.PageNumber);
+                                    }
+                                }
+                            }
+
+                           
+
+                            #region Payment Due date
                             //var invoiceDueDate = Regex.Match(line.Text, @"\b(DUE DATE)\W+");
                             //if (invoiceDueDate.Success && string.IsNullOrEmpty(textExtraction.Invoice.OrderDate.Text))
                             //{
@@ -428,7 +498,8 @@ namespace TextExtraction
                             //    {
                             //        details.Rects.Add(dueDate.Value);
                             //    }
-                            //}
+                            //} 
+                            #endregion
                         }
                     }
                     if (details.Rects.Count > 0)
@@ -436,6 +507,7 @@ namespace TextExtraction
                         cords.Add(details);
                     }
                 }
+
                 HighliightPdf(documents, cords);
                 bool testing = _config.GetValue<string>("Testing").IsNullOrEmpty() ? false : System.Convert.ToBoolean(_config.GetValue<string>("Testing"));
                 if (testing)
@@ -526,7 +598,7 @@ namespace TextExtraction
 
                 //File.Delete(Path.Combine(_inputPath, documents.FileName));
             }
-            File.Move(Path.Combine(_inputPath, documents.FileName), Path.Combine(_outputPath, documents.FileName));
+            //File.Move(Path.Combine(_inputPath, documents.FileName), Path.Combine(_outputPath, documents.FileName));
         }
 
         private void DeleteFiles(string[] pdfFiles)
@@ -548,6 +620,73 @@ namespace TextExtraction
             }
         }
 
-       
+        //private ConfigurationSettings GetTemplate(string id)
+        //{
+        //   return _dbHelper.GetTemplateById(id);
+        //}
+
+        private dynamic GetObject(string propertyName)
+        {
+            // Create a dynamic object similar to InvoiceNumber
+            var dynamicObject = CreateDynamicObject(propertyName, typeof(DynamicObject));
+
+            //// Set values for the properties of the dynamic object
+            SetProperty(dynamicObject, "FieldName", propertyName);
+            SetProperty(dynamicObject, "Text", "");
+            SetProperty(dynamicObject, "PageNumber", 0);
+            SetProperty(dynamicObject, "Rectangle", "");
+
+            //// Access the values from the dynamic object
+            //var text = GetProperty(dynamicObject, "Text");
+            //var pageNumber = GetProperty(dynamicObject, "PageNumber");
+            //var rectangle = GetProperty(dynamicObject, "Rectangle");
+
+            return dynamicObject;
+        }
+
+        public static object CreateDynamicObject(string typeName, Type baseType)
+        {
+            var assemblyBuilder = AssemblyBuilder.DefineDynamicAssembly(new AssemblyName("DynamicAssembly"), AssemblyBuilderAccess.Run);
+
+            var moduleBuilder = assemblyBuilder.DefineDynamicModule("DynamicModule");
+
+            var typeBuilder = moduleBuilder.DefineType(typeName, TypeAttributes.Public, baseType);
+
+            var dynamicType = typeBuilder.CreateType();
+
+            var dynamicObject = Activator.CreateInstance(dynamicType);
+
+            return dynamicObject;
+        }
+
+        public static void SetProperty(object obj, string propertyName, object value)
+        {
+            var property = obj.GetType().GetProperty(propertyName);
+            if (property != null && property.CanWrite)
+            {
+                property.SetValue(obj, Convert.ChangeType(value, property.PropertyType));
+            }
+        }
+
+        public static object GetProperty(object obj, string propertyName)
+        {
+            var property = obj.GetType().GetProperty(propertyName);
+            if (property != null && property.CanRead)
+            {
+                return property.GetValue(obj);
+            }
+            return null;
+        }
+
+
+
+    }
+
+    public class DynamicObject
+    {
+        public string FieldName { get; set; }
+        public string Text { get; set; }
+        public int PageNumber { get; set; }
+        public string Rectangle { get; set; }
     }
 }

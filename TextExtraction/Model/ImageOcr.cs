@@ -33,6 +33,7 @@ namespace TextExtraction.Model
 
         public PatientName Name { get; set; }
         public PatientBirthDate BirthDate { get; set; }
+        
         public Patient()
         {
             Name = new();
@@ -54,7 +55,7 @@ namespace TextExtraction.Model
         public VendorName VendorName { get; set; }
         public Tax Tax { get; set; }
         public GrossAmount Total { get; set; }
-
+        public List<dynamic> AdditionalFields { get; set; }
         public Invoice()
         {
             InvNum = new();
@@ -64,27 +65,9 @@ namespace TextExtraction.Model
             VendorName = new();
             Tax = new();
             Total = new();
+            AdditionalFields = new List<dynamic>();
         }
 
-
-        //public string Number { get; set; }
-        //public Rectangle InvNumCords { get; set; }
-        //public string Date { get; set; }
-        //public Rectangle InvDateCords { get; set; }
-        //public string OrderDate { get; set; }
-        //public Rectangle OrderDateCords { get; set; }
-        //public string PurchaseOrderNumber { get; set; }
-        //public Rectangle PurchaseOrderNumCords { get; set; }
-        //public string Currency { get; set; }
-        //public Supplier Supplier { get; set; }
-        //public Customer Customer { get; set; }
-        //public Payment Payment { get; set; }
-        //public Invoice()
-        //{
-        //    Supplier = new();
-        //    Customer = new();
-        //    Payment = new();
-        //}
     }
 
     public class Supplier
