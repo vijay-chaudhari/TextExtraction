@@ -68,44 +68,44 @@ namespace TextExtraction
                 bool extractPatientDetails = _config.GetValue<string>("ExtractPatientDetails").IsNullOrEmpty() ? false : System.Convert.ToBoolean(_config.GetValue<string>("ExtractPatientDetails"));
                 string temaplateId = _config.GetValue<string>("TemaplateId").IsNullOrEmpty() ? "" : _config.GetValue<string>("TemaplateId");
 
-                //_template = GetTemplate(temaplateId);
-                //if (_template is null)
+                _template = GetTemplate(temaplateId);
+                if (_template is null)
+                {
+                    _logger.LogError("No Template found in database for TemplateId {temaplateId}", temaplateId);
+                    // return false;
+                }
+
+                //List<FieldModel> fieldModels = new List<FieldModel>();
+
+                //FieldModel fieldModel = new FieldModel
                 //{
-                //    _logger.LogError("No Template found in database for TemplateId {temaplateId}", temaplateId);
-                //   // return false;
-                //}
+                //    FieldName = "CustName",
+                //    RegExpression = @"\b(INVOICE)(\W+|\s+)(\d+)\b",
+                //    CoOrdinates = "158.97, 128.77, 177.56, 135.17"
+                //};
+                //FieldModel fieldModel1 = new FieldModel
+                //{
+                //    FieldName = "PayementRef",
+                //    RegExpression = @"^(?!.*DUE.*DATE)(?=.*(?:INVOICE\s+)?DATE).*$",
+                //    CoOrdinates = "161.28,143.04001,190.56001,146.40001"
+                //};
+                //FieldModel fieldModel2 = new FieldModel
+                //{
+                //    FieldName = "PaymentDueDate",
+                //    RegExpression = @"^(?!.*DUE.*DATE)(?=.*(?:INVOICE\s+)?DATE).*$",
+                //    CoOrdinates = "161.28,143.04001,190.56001,146.40001"
+                //};
 
-                List<FieldModel> fieldModels = new List<FieldModel>();
+                //fieldModels.Add(fieldModel);
+                //fieldModels.Add(fieldModel1);
+                //fieldModels.Add(fieldModel2);
 
-                FieldModel fieldModel = new FieldModel
-                {
-                    FieldName = "CustName",
-                    RegExpression = @"\b(INVOICE)(\W+|\s+)(\d+)\b",
-                    CoOrdinates = "158.97, 128.77, 177.56, 135.17"
-                };
-                FieldModel fieldModel1 = new FieldModel
-                {
-                    FieldName = "PayementRef",
-                    RegExpression = @"^(?!.*DUE.*DATE)(?=.*(?:INVOICE\s+)?DATE).*$",
-                    CoOrdinates = "161.28,143.04001,190.56001,146.40001"
-                };
-                FieldModel fieldModel2 = new FieldModel
-                {
-                    FieldName = "PaymentDueDate",
-                    RegExpression = @"^(?!.*DUE.*DATE)(?=.*(?:INVOICE\s+)?DATE).*$",
-                    CoOrdinates = "161.28,143.04001,190.56001,146.40001"
-                };
-               
-                fieldModels.Add(fieldModel);
-                fieldModels.Add(fieldModel1);
-                fieldModels.Add(fieldModel2);
-
-                _template = new ConfigurationSettings
-                {
-                    TemplateId = Guid.NewGuid(),
-                    TemplateName = "Invoice",
-                    Fields = fieldModels
-                };
+                //_template = new ConfigurationSettings
+                //{
+                //    TemplateId = Guid.NewGuid(),
+                //    TemplateName = "Invoice",
+                //    Fields = fieldModels
+                //};
 
 
                 if (extractPatientDetails)
@@ -677,8 +677,6 @@ namespace TextExtraction
             }
             return null;
         }
-
-
 
     }
 
