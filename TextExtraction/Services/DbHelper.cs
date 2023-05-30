@@ -35,15 +35,15 @@ namespace TextExtraction.Services
             dbContext.SaveChanges();
         }
 
-        //public ConfigurationSettings GetTemplateById(string id)
-        //{
-        //    using var dbContext = new AppDbContext(DbContextOptions());
-        //    var template = dbContext.Template.Find(id);
-        //    if (template != null)
-        //    {
-        //        return template;
-        //    }
-        //    return null;
-        //}
+        public ConfigurationSettings GetTemplateById(string id)
+        {
+            using var dbContext = new AppDbContext(DbContextOptions());
+            var template = dbContext.AttributeConfig.Find(id);
+            if (template != null)
+            {
+                return template;
+            }
+            return null;
+        }
     }
 }

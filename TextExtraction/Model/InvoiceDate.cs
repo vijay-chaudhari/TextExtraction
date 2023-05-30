@@ -13,13 +13,13 @@ namespace TextExtraction.Model
         public int PageNumber { get; set; }
         public string Rectangle { get; set; }
 
-        public static void Extract(LineData line, int pageNumber, List<Rect> rects, InvoiceDate invDate)
+        public static void Extract(LineData line, int pageNumber, InvoiceDate invDate, List<Rect> rects = null)
         {
             var invoiceDate = Regex.Match(line.Text, @"^(?!.*DUE.*DATE)(?=.*(?:INVOICE\s+)?DATE).*$");
             if (invoiceDate.Success)
             {
                 var date = EntityRecognizer.RecognizeDate(line.Text).ToUpper();
-                if (!string.IsNullOrEmpty(date)) 
+                if (!string.IsNullOrEmpty(date))
                 {
                     invDate.Text = date;
                     //Console.WriteLine("Invoice date :" + date);
@@ -48,14 +48,14 @@ namespace TextExtraction.Model
                         Tesseract.Rect rect = Rect.FromCoords(x1, y1, x2, y2);
                         invDate.Rectangle = Helper.ConvertToPdfPoints(rect);
                         invDate.PageNumber = pageNumber;
-                        rects.Add(rect);
+                        //rects.Add(rect);
                     }
                     else
                     {
                         Tesseract.Rect rect = result.Value;
                         invDate.Rectangle = Helper.ConvertToPdfPoints(rect);
                         invDate.PageNumber = pageNumber;
-                        rects.Add(rect);
+                        //rects.Add(rect);
                     }
                 }
             }

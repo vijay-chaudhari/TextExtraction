@@ -4,13 +4,13 @@ using Tesseract;
 
 namespace TextExtraction.Model
 {
-    public  class PurchaseOrder
+    public class PurchaseOrder
     {
         public string Text { get; set; }
         public int PageNumber { get; set; }
         public string Rectangle { get; set; }
 
-        public static void Extract(LineData line, int pageNumber, List<Rect> rects, PurchaseOrder purchaseOrder)
+        public static void Extract(LineData line, int pageNumber, PurchaseOrder purchaseOrder, List<Rect> rects = null)
         {
             var orderNumber = Regex.Match(line.Text, @"\b(LOAD|REFERENCE)\W+(\w+\d+\w+)");
             if (orderNumber.Success)
@@ -20,7 +20,7 @@ namespace TextExtraction.Model
                 Rect rect = line.Words.Single(x => x.Text == orderNumber.Groups[2].Value).Coordinates;
                 purchaseOrder.Rectangle = Helper.ConvertToPdfPoints(rect);
                 purchaseOrder.PageNumber = pageNumber;
-                rects.Add(rect);
+                //rects.Add(rect);
             }
         }
     }

@@ -1,6 +1,8 @@
 using java.awt;
 using Microsoft.EntityFrameworkCore;
 using TextExtraction.Services;
+using Serilog;
+using TextExtraction.Initialization;
 
 namespace TextExtraction
 {
@@ -8,26 +10,50 @@ namespace TextExtraction
     {
         public static void Main(string[] args)
         {
-            IHost host = Host.CreateDefaultBuilder(args)
-                .UseWindowsService()
-                .ConfigureServices((hostcontext, services) =>
-                {
-                    IConfiguration configuration = hostcontext.Configuration;
-                    AppSettings.Configuration = configuration;
-                    AppSettings.ConfigurationString = configuration.GetConnectionString("Default");
-                    var optionBuilder = new DbContextOptionsBuilder<AppDbContext>();
-                    optionBuilder.UseSqlServer(configuration.GetConnectionString("Default"));
-                    services.AddScoped<AppDbContext>(d => new AppDbContext(optionBuilder.Options));
-                    services.AddWindowsService(options =>
-                    {
-                        options.ServiceName = "TextExtraction";
-                    });
-                    services.AddSingleton<DbHelper>();
-                    services.AddHostedService<Worker>();
-                })
-                .Build();
+            try
+            {
+                Log.Logger = new LoggerConfiguration()
+                .MinimumLevel.Debug()
+                .MinimumLevel.Override("Microsoft", Serilog.Events.LogEventLevel.Warning)
+                .Enrich.FromLogContext()
+                .WriteTo.File(@"C:\temp\TextExtraction\log.txt", rollingInterval: RollingInterval.Day)
+                .CreateLogger();
 
-            host.Run();
+                IHost host = Host.CreateDefaultBuilder(args)
+                        .UseWindowsService()
+                        .UseSerilog()
+                        .ConfigureServices((hostcontext, services) =>
+                        {
+                            services.AddHttpClient<IAPIService, APIService>(client =>
+                            {
+                                client.BaseAddress = new Uri("https://localhost:44340/");
+                            });
+                            IConfiguration configuration = hostcontext.Configuration;
+                            AppSettings.Configuration = configuration;
+                            AppSettings.ConfigurationString = configuration.GetConnectionString("Default");
+                            var optionBuilder = new DbContextOptionsBuilder<AppDbContext>();
+                            optionBuilder.UseSqlServer(configuration.GetConnectionString("Default"));
+                            services.AddScoped<AppDbContext>(d => new AppDbContext(optionBuilder.Options));
+                            services.AddWindowsService(options =>
+                            {
+                                options.ServiceName = "TextExtraction";
+                            });
+                            services.AddSingleton<DbHelper>();
+                            services.AddTransient<Initializer>();
+                            services.AddHostedService<Worker>();
+                        })
+                        .Build();
+
+                host.Run();
+            }
+            catch (Exception ex)
+            {
+                Log.Fatal(ex, "There was a problem starting the service");
+            }
+            finally
+            {
+                Log.CloseAndFlush();
+            }
         }
     }
 }

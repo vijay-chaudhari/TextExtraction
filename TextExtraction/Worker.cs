@@ -6,7 +6,8 @@ using System.Reflection;
 using System.Reflection.Emit;
 using System.Text.RegularExpressions;
 using Tesseract;
-using TextExtraction.Dynamic;
+using TextExtraction.APIModels;
+using TextExtraction.Initialization;
 using TextExtraction.Model;
 using TextExtraction.Services;
 using Exception = System.Exception;
@@ -22,21 +23,27 @@ namespace TextExtraction
         private string[]? _primarySerachKeys;
         private int counter = 0;
         private DbHelper _dbHelper;
+        private readonly IAPIService service;
         public CRFClassifier? _crfClassifier;
         private TesseractEngine? _engine;
         private readonly ILogger<Worker> _logger;
         private readonly IConfiguration _config;
-        private  ConfigurationSettings _template;
+        private ConfigurationSettings? _template;
+        private Initializer _initializer;
+        
 
-        public Worker(ILogger<Worker> logger, IConfiguration config, DbHelper dbHelper)
+        public Worker(ILogger<Worker> logger, IConfiguration config, DbHelper dbHelper, IAPIService service, Initializer initializer)
         {
             _logger = logger;
             _config = config;
             _dbHelper = dbHelper;
+            this.service = service;
+            _initializer = initializer;
         }
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
-            if (Initialise())
+           bool allGood =  _initializer.Initialize(ref _crfClassifier, ref _engine, ref _template);
+            if (allGood)
             {
                 _inputPath = _config.GetValue<string>("InputFolderPath");
                 _outputPath = _config.GetValue<string>("OutputFolderPath");
@@ -55,7 +62,7 @@ namespace TextExtraction
                         RunOcr(pdfFiles);
 
                         // Wait for 1 minute before checking the input folder again
-                        await Task.Delay(TimeSpan.FromMinutes(2), stoppingToken);
+                        await Task.Delay(TimeSpan.FromMinutes(15), stoppingToken);
                     }
                 }
             }
@@ -65,48 +72,31 @@ namespace TextExtraction
         {
             try
             {
+
                 bool extractPatientDetails = _config.GetValue<string>("ExtractPatientDetails").IsNullOrEmpty() ? false : System.Convert.ToBoolean(_config.GetValue<string>("ExtractPatientDetails"));
                 string temaplateId = _config.GetValue<string>("TemaplateId").IsNullOrEmpty() ? "" : _config.GetValue<string>("TemaplateId");
 
-                _template = GetTemplate(temaplateId);
-                if (_template is null)
+                var request = new LoginRequest { UserNameOrEmailAddress = "serviceuser", Password = "1q2w3E*", RememberMe = true };
+
+                LoginResponse? result = service.PostAsync<LoginRequest, LoginResponse?>("api/account/login", request).GetAwaiter().GetResult();
+
+                if (result is not null && result.Description.Equals("Success"))
                 {
-                    _logger.LogError("No Template found in database for TemplateId {temaplateId}", temaplateId);
-                    // return false;
+                    _template = service.GetAsync<ConfigurationSettings>($"api/app/config/{temaplateId}").GetAwaiter().GetResult();
+                    if (_template is null)
+                    {
+                        _logger.LogError("No Template found for TemplateId {temaplateId}", temaplateId);
+                        //_template = _dbHelper.GetTemplateById(temaplateId);
+                    }
+                    else
+                    {
+                        _logger.LogInformation("Template recovered from API tamplate ID: {temaplateId}", temaplateId);
+                    }
                 }
-
-                //List<FieldModel> fieldModels = new List<FieldModel>();
-
-                //FieldModel fieldModel = new FieldModel
-                //{
-                //    FieldName = "CustName",
-                //    RegExpression = @"\b(INVOICE)(\W+|\s+)(\d+)\b",
-                //    CoOrdinates = "158.97, 128.77, 177.56, 135.17"
-                //};
-                //FieldModel fieldModel1 = new FieldModel
-                //{
-                //    FieldName = "PayementRef",
-                //    RegExpression = @"^(?!.*DUE.*DATE)(?=.*(?:INVOICE\s+)?DATE).*$",
-                //    CoOrdinates = "161.28,143.04001,190.56001,146.40001"
-                //};
-                //FieldModel fieldModel2 = new FieldModel
-                //{
-                //    FieldName = "PaymentDueDate",
-                //    RegExpression = @"^(?!.*DUE.*DATE)(?=.*(?:INVOICE\s+)?DATE).*$",
-                //    CoOrdinates = "161.28,143.04001,190.56001,146.40001"
-                //};
-
-                //fieldModels.Add(fieldModel);
-                //fieldModels.Add(fieldModel1);
-                //fieldModels.Add(fieldModel2);
-
-                //_template = new ConfigurationSettings
-                //{
-                //    TemplateId = Guid.NewGuid(),
-                //    TemplateName = "Invoice",
-                //    Fields = fieldModels
-                //};
-
+                else
+                {
+                    _logger.LogError("Login API failed");
+                }
 
                 if (extractPatientDetails)
                 {
@@ -129,7 +119,6 @@ namespace TextExtraction
                     _logger.LogInformation("OCR Engine Initialize successfully on {time}", DateTimeOffset.Now);
                     return true;
                 }
-
                 return false;
             }
             catch (Exception ex)
@@ -250,6 +239,13 @@ namespace TextExtraction
                 List<DrawCoordinates> cords = new();
                 TextExtractionFields textExtraction = new TextExtractionFields();
 
+                foreach (var addField in _template.Fields)
+                {
+                    var newProp = GetObject(addField.FieldName);
+                    textExtraction.Invoice.AdditionalFields.Add(newProp);
+
+                }
+
                 foreach (var page in documents.Pages)
                 {
                     var details = new DrawCoordinates { PageNumber = page.PageNumber };
@@ -303,14 +299,33 @@ namespace TextExtraction
                 }
                 else
                 {
-                    _dbHelper.InsertData(new ImageOcr
+                    var request = new ImageOcr
                     {
                         Confidence = string.Format("{0:0.00}", documents.Confidence),
                         InputPath = Path.Combine(_inputPath, documents.FileName),
                         OutputPath = Path.Combine(_outputPath, documents.FileName),
                         OCRText = JsonConvert.SerializeObject(documents.Pages),
                         Output = JsonConvert.SerializeObject(textExtraction),
-                    });
+                    };
+
+                    ImageOcrResponse? result = service.PostAsync<ImageOcr, ImageOcrResponse?>("api/app/ocr", request).GetAwaiter().GetResult();
+                    if (result is not null)
+                    {
+                        _logger.LogInformation("OCR and extraction id done for {FileName}, Its Id is : {id} and created at : {time}", documents.FileName, result.id, result.creationTime);
+                    }
+                    else
+                    {
+                        _logger.LogError("Something is wrong with OCR API, Check FaxVerification Sites logs for more details."); 
+                    }
+
+                    //_dbHelper.InsertData(new ImageOcr
+                    //{
+                    //    Confidence = string.Format("{0:0.00}", documents.Confidence),
+                    //    InputPath = Path.Combine(_inputPath, documents.FileName),
+                    //    OutputPath = Path.Combine(_outputPath, documents.FileName),
+                    //    OCRText = JsonConvert.SerializeObject(documents.Pages),
+                    //    Output = JsonConvert.SerializeObject(textExtraction),
+                    //});
                 }
             }
 
@@ -319,6 +334,7 @@ namespace TextExtraction
         private void ExtractInvoiceData(List<ProcessedPdf> textData)
         {
             Array.Clear(_primarySerachKeys, 0, _primarySerachKeys.Length);
+
             _primarySerachKeys = _config.GetSection("SearchKeys:InvoiceKeys").Get<string[]>();
 
             foreach (var documents in textData)
@@ -330,10 +346,12 @@ namespace TextExtraction
                 {
                     var newProp = GetObject(addField.FieldName);
                     textExtraction.Invoice.AdditionalFields.Add(newProp);
+
                 }
                 foreach (var page in documents.Pages)
                 {
-                    var details = new DrawCoordinates { PageNumber = page.PageNumber };
+                    //var details = new DrawCoordinates { PageNumber = page.PageNumber };
+
                     foreach (var line in page.Lines)
                     {
                         _primarySerachKeys = _primarySerachKeys.Select(x => x.ToUpper()).ToArray();
@@ -348,7 +366,7 @@ namespace TextExtraction
                             {
                                 if (line.Text.Equals("J.J. MARIN, LLC"))
                                 {
-                                    details.Rects.Add(line.LineCoordinates);
+                                    // details.Rects.Add(line.LineCoordinates);
                                     textExtraction.Invoice.VendorName.Text = "J.J. MARIN, LLC";
                                     textExtraction.Invoice.VendorName.Rectangle = Helper.ConvertToPdfPoints(line.LineCoordinates);
                                     textExtraction.Invoice.VendorName.PageNumber = page.PageNumber;
@@ -369,7 +387,7 @@ namespace TextExtraction
                             {
                                 if (line.Text.Equals("COMFREIGHT HAULPAY"))
                                 {
-                                    details.Rects.Add(line.LineCoordinates);
+                                    //details.Rects.Add(line.LineCoordinates);
                                     textExtraction.Invoice.VendorName.Text = "COMFREIGHT HAULPAY";
                                     textExtraction.Invoice.VendorName.Rectangle = Helper.ConvertToPdfPoints(line.LineCoordinates);
                                     textExtraction.Invoice.VendorName.PageNumber = page.PageNumber;
@@ -391,7 +409,7 @@ namespace TextExtraction
                             {
                                 if (line.Text.Equals("RTS FINANCIAL SERVICE, INC."))
                                 {
-                                    details.Rects.Add(line.LineCoordinates);
+                                    //details.Rects.Add(line.LineCoordinates);
                                     textExtraction.Invoice.VendorName.Text = "RTS FINANCIAL SERVICE, INC";
                                     textExtraction.Invoice.VendorName.Rectangle = Helper.ConvertToPdfPoints(line.LineCoordinates);
                                     textExtraction.Invoice.VendorName.PageNumber = page.PageNumber;
@@ -423,22 +441,22 @@ namespace TextExtraction
                         {
                             if (string.IsNullOrEmpty(textExtraction.Invoice.InvNum.Text))
                             {
-                                InvoiceNumber.Extract(line, page.PageNumber, details.Rects, textExtraction.Invoice.InvNum);
+                                InvoiceNumber.Extract(line, page.PageNumber, textExtraction.Invoice.InvNum /*,details.Rects*/);
                             }
 
                             if (string.IsNullOrEmpty(textExtraction.Invoice.InvDate.Text))
                             {
-                                InvoiceDate.Extract(line, page.PageNumber, details.Rects, textExtraction.Invoice.InvDate);
+                                InvoiceDate.Extract(line, page.PageNumber, textExtraction.Invoice.InvDate /*,details.Rects,*/);
                             }
 
                             if (string.IsNullOrEmpty(textExtraction.Invoice.OrderNum.Text))
                             {
-                                PurchaseOrder.Extract(line, page.PageNumber, details.Rects, textExtraction.Invoice.OrderNum);
+                                PurchaseOrder.Extract(line, page.PageNumber, textExtraction.Invoice.OrderNum /*,details.Rects,*/);
                             }
 
                             if (string.IsNullOrEmpty(textExtraction.Invoice.Total.Text))
                             {
-                                GrossAmount.Extract(line, page.PageNumber, details.Rects, textExtraction.Invoice.Total);
+                                GrossAmount.Extract(line, page.PageNumber, textExtraction.Invoice.Total /*, details.Rects,*/);
                             }
 
                             foreach (var newField in textExtraction.Invoice.AdditionalFields)
@@ -452,15 +470,12 @@ namespace TextExtraction
                                     if (additionalFields.Success)
                                     {
                                         SetProperty(newField, "Text", additionalFields.Value);
-                                        //Rect rect = line.Words.Single(x => x.Text == additionalFields.Value).Coordinates;
                                         string rectangle = Helper.ConvertToPdfPoints(line.LineCoordinates);
                                         SetProperty(newField, "Rectangle", rectangle);
                                         SetProperty(newField, "PageNumber", page.PageNumber);
                                     }
                                 }
                             }
-
-                           
 
                             #region Payment Due date
                             //var invoiceDueDate = Regex.Match(line.Text, @"\b(DUE DATE)\W+");
@@ -502,10 +517,10 @@ namespace TextExtraction
                             #endregion
                         }
                     }
-                    if (details.Rects.Count > 0)
-                    {
-                        cords.Add(details);
-                    }
+                    //if (details.Rects.Count > 0)
+                    //{
+                    //    cords.Add(details);
+                    //}
                 }
 
                 HighliightPdf(documents, cords);
@@ -516,14 +531,23 @@ namespace TextExtraction
                 }
                 else
                 {
-                    _dbHelper.InsertData(new ImageOcr
+                    var request = new ImageOcr
                     {
                         Confidence = string.Format("{0:0.00}", documents.Confidence),
                         InputPath = Path.Combine(_inputPath, documents.FileName),
                         OutputPath = Path.Combine(_outputPath, documents.FileName),
                         OCRText = JsonConvert.SerializeObject(documents.Pages),
-                        Output = JsonConvert.SerializeObject(textExtraction),
-                    });
+                        Output = JsonConvert.SerializeObject(textExtraction)
+                    };
+                    ImageOcrResponse? result = service.PostAsync<ImageOcr, ImageOcrResponse?>("api/app/ocr", request).GetAwaiter().GetResult();
+                    if (result is not null)
+                    {
+                        _logger.LogInformation("OCR and extraction id done for {FileName}, Its Id is : {id} and created at : {time}", documents.FileName, result.id, result.creationTime);
+                    }
+                    else
+                    {
+                        _logger.LogError("Something is wrong with OCR API, Check FaxVerification Sites logs for more details.");
+                    }
                 }
             }
             _logger.LogInformation("Invoice details extraction job is done...!");
@@ -596,9 +620,9 @@ namespace TextExtraction
                     #endregion
                 }
 
-                //File.Delete(Path.Combine(_inputPath, documents.FileName));
+                File.Delete(Path.Combine(_inputPath, documents.FileName));
             }
-            //File.Move(Path.Combine(_inputPath, documents.FileName), Path.Combine(_outputPath, documents.FileName));
+            File.Move(Path.Combine(_inputPath, documents.FileName), Path.Combine(_outputPath, documents.FileName));
         }
 
         private void DeleteFiles(string[] pdfFiles)
@@ -620,11 +644,6 @@ namespace TextExtraction
             }
         }
 
-        //private ConfigurationSettings GetTemplate(string id)
-        //{
-        //   return _dbHelper.GetTemplateById(id);
-        //}
-
         private dynamic GetObject(string propertyName)
         {
             // Create a dynamic object similar to InvoiceNumber
@@ -644,7 +663,7 @@ namespace TextExtraction
             return dynamicObject;
         }
 
-        public static object CreateDynamicObject(string typeName, Type baseType)
+        public static object CreateDynamicObject(string typeName, System.Type baseType)
         {
             var assemblyBuilder = AssemblyBuilder.DefineDynamicAssembly(new AssemblyName("DynamicAssembly"), AssemblyBuilderAccess.Run);
 

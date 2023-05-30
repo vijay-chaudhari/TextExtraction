@@ -33,11 +33,13 @@ namespace TextExtraction.Model
 
         public PatientName Name { get; set; }
         public PatientBirthDate BirthDate { get; set; }
-        
+        public List<dynamic> AdditionalFields { get; set; } 
+
         public Patient()
         {
             Name = new();
             BirthDate = new();
+            AdditionalFields = new List<dynamic>();
 
         }
         //public string Name { get; set; }

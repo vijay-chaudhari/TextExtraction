@@ -10,7 +10,7 @@ namespace TextExtraction.Model
         public int PageNumber { get; set; }
         public string Rectangle { get; set; }
 
-        public static void Extract(LineData line, int pageNumber, List<Rect> rects, InvoiceNumber invoice)
+        public static void Extract(LineData line, int pageNumber, InvoiceNumber invoice, List<Rect> rects = null)
         {
             var invoiceNumber = Regex.Match(line.Text, @"\b(INVOICE)(\W+|\s+)(\d+)\b");
             if (invoiceNumber.Success)
@@ -20,7 +20,7 @@ namespace TextExtraction.Model
                 invoice.Rectangle = Helper.ConvertToPdfPoints(rect);
                 invoice.PageNumber = pageNumber;
                 //Console.WriteLine("Invoice Number :" + Regex.Match(line.Text, @"[.\d]+").Value);
-                rects.Add(rect);    
+                //rects.Add(rect);    
             }
         }
     }
