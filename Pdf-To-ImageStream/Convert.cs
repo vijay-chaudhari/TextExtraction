@@ -21,6 +21,7 @@ namespace Pdf_To_ImageStream
                     {
                         var stream = new MemoryStream();
                         resterizer.GetPage(desired_dpi, i).Save(stream, ImageFormat.Tiff);
+                        resterizer.GetPage(desired_dpi, 1).Save($"{Path.GetFileNameWithoutExtension(pdfDath)}.tiff");
                         streams.Add(stream);
                     }
                     return streams;

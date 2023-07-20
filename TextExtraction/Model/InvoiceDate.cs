@@ -13,52 +13,60 @@ namespace TextExtraction.Model
         public int PageNumber { get; set; }
         public string Rectangle { get; set; }
 
-        public static void Extract(LineData line, int pageNumber, InvoiceDate invDate, List<Rect> rects = null)
+        public static bool Extract(LineData line, int pageNumber, InvoiceDate invDate, List<Rect> rects = null)
         {
-            var invoiceDate = Regex.Match(line.Text, @"^(?!.*DUE.*DATE)(?=.*(?:INVOICE\s+)?DATE).*$");
-            if (invoiceDate.Success)
+            try
             {
-                var date = EntityRecognizer.RecognizeDate(line.Text).ToUpper();
-                if (!string.IsNullOrEmpty(date))
+                var invoiceDate = Regex.Match(line.Text, @"^(?!.*DUE.*DATE)(?=.*(?:INVOICE\s+)?DATE).*$");
+                if (invoiceDate.Success)
                 {
-                    invDate.Text = date;
-                    //Console.WriteLine("Invoice date :" + date);
-                    var result = line.Words.SingleOrDefault(x => x.Text.Equals(date, StringComparison.OrdinalIgnoreCase))?.Coordinates;
-                    if (result is null)
+                    var date = EntityRecognizer.RecognizeDate(line.Text).ToUpper();
+                    if (!string.IsNullOrEmpty(date))
                     {
-                        var arr = date.Split(' ');
-                        int x1 = 0, y1 = 0, x2 = 0, y2 = 0;
-                        for (int i = 0; i < arr.Length; i++)
+                        invDate.Text = date;
+                        //Console.WriteLine("Invoice date :" + date);
+                        var result = line.Words.SingleOrDefault(x => x.Text.Equals(date, StringComparison.OrdinalIgnoreCase))?.Coordinates;
+                        if (result is null)
                         {
-                            var a = line.Words.SingleOrDefault(x => x.Text.Equals(arr[i], StringComparison.OrdinalIgnoreCase))?.Coordinates;
-                            if (i == 0)
+                            var arr = date.Split(' ');
+                            int x1 = 0, y1 = 0, x2 = 0, y2 = 0;
+                            for (int i = 0; i < arr.Length; i++)
                             {
-                                if (a is not null)
+                                var a = line.Words.SingleOrDefault(x => x.Text.Equals(arr[i], StringComparison.OrdinalIgnoreCase))?.Coordinates;
+                                if (i == 0)
                                 {
-                                    x1 = a.Value.X1;
-                                    y1 = a.Value.Y1;
+                                    if (a is not null)
+                                    {
+                                        x1 = a.Value.X1;
+                                        y1 = a.Value.Y1;
+                                    }
+                                }
+                                else if (i == arr.Length - 1)
+                                {
+                                    x2 = a.Value.X2;
+                                    y2 = a.Value.Y2;
                                 }
                             }
-                            else if (i == arr.Length - 1)
-                            {
-                                x2 = a.Value.X2;
-                                y2 = a.Value.Y2;
-                            }
+                            Tesseract.Rect rect = Rect.FromCoords(x1, y1, x2, y2);
+                            invDate.Rectangle = Helper.ConvertToPdfPoints(rect);
+                            invDate.PageNumber = pageNumber;
+                            //rects.Add(rect);
+                            return true;
                         }
-                        Tesseract.Rect rect = Rect.FromCoords(x1, y1, x2, y2);
-                        invDate.Rectangle = Helper.ConvertToPdfPoints(rect);
-                        invDate.PageNumber = pageNumber;
-                        //rects.Add(rect);
+                        else
+                        {
+                            Tesseract.Rect rect = result.Value;
+                            invDate.Rectangle = Helper.ConvertToPdfPoints(rect);
+                            invDate.PageNumber = pageNumber;
+                            //rects.Add(rect);
+                            return false;
+                        }
                     }
-                    else
-                    {
-                        Tesseract.Rect rect = result.Value;
-                        invDate.Rectangle = Helper.ConvertToPdfPoints(rect);
-                        invDate.PageNumber = pageNumber;
-                        //rects.Add(rect);
-                    }
+                    return false;
                 }
+                return false;
             }
+            catch { return false; }
         }
     }
 }

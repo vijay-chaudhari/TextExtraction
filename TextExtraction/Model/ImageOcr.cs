@@ -55,9 +55,12 @@ namespace TextExtraction.Model
         public PurchaseOrder OrderNum { get; set; }
         public PurchaseOrderDate OrderDate { get; set; }
         public VendorName VendorName { get; set; }
-        public Tax Tax { get; set; }
-        public GrossAmount Total { get; set; }
+        public VenderNumber VendorNum { get; set; }
+        public Tax TaxAmount { get; set; }
+        public GrossAmount InvoiceAmount { get; set; }
+        public GrossAmount GrossAmount { get; set; }
         public List<dynamic> AdditionalFields { get; set; }
+        public List<Table> TableDetails { get; set; }
         public Invoice()
         {
             InvNum = new();
@@ -65,9 +68,12 @@ namespace TextExtraction.Model
             OrderNum = new();
             OrderDate = new();
             VendorName = new();
-            Tax = new();
-            Total = new();
+            VendorNum = new();
+            TaxAmount = new();
+            GrossAmount = new();
+            InvoiceAmount = new();
             AdditionalFields = new List<dynamic>();
+            TableDetails = new List<Table>();
         }
 
     }
@@ -108,6 +114,12 @@ namespace TextExtraction.Model
         public string Paid { get; set; }
         public string DueAmount { get; set; }
         public string PaymentReference { get; set; }
+    }
+
+    public class Table
+    {
+        public int CellNo { get; set; }
+        public string Text { get; set; }
     }
     #endregion
 

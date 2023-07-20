@@ -24,13 +24,13 @@ namespace TextExtraction
                         .UseSerilog()
                         .ConfigureServices((hostcontext, services) =>
                         {
-                            services.AddHttpClient<IAPIService, APIService>(client =>
-                            {
-                                client.BaseAddress = new Uri("https://localhost:44340/");
-                            });
                             IConfiguration configuration = hostcontext.Configuration;
                             AppSettings.Configuration = configuration;
                             AppSettings.ConfigurationString = configuration.GetConnectionString("Default");
+                            services.AddHttpClient<IAPIService, APIService>(client =>
+                            {
+                                client.BaseAddress = new Uri(configuration.GetValue<string>("APIServer"));
+                            });
                             var optionBuilder = new DbContextOptionsBuilder<AppDbContext>();
                             optionBuilder.UseSqlServer(configuration.GetConnectionString("Default"));
                             services.AddScoped<AppDbContext>(d => new AppDbContext(optionBuilder.Options));
