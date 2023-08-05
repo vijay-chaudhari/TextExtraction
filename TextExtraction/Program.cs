@@ -31,14 +31,14 @@ namespace TextExtraction
                             {
                                 client.BaseAddress = new Uri(configuration.GetValue<string>("APIServer"));
                             });
-                            var optionBuilder = new DbContextOptionsBuilder<AppDbContext>();
-                            optionBuilder.UseSqlServer(configuration.GetConnectionString("Default"));
-                            services.AddScoped<AppDbContext>(d => new AppDbContext(optionBuilder.Options));
+                            //var optionBuilder = new DbContextOptionsBuilder<AppDbContext>();
+                            //optionBuilder.UseSqlServer(configuration.GetConnectionString("Default"));
+                            //services.AddScoped<AppDbContext>(d => new AppDbContext(optionBuilder.Options));
                             services.AddWindowsService(options =>
                             {
                                 options.ServiceName = "TextExtraction";
                             });
-                            services.AddSingleton<DbHelper>();
+                            //services.AddSingleton<DbHelper>();
                             services.AddTransient<Initializer>();
                             services.AddHostedService<Worker>();
                         })

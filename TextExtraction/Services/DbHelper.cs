@@ -5,45 +5,45 @@ namespace TextExtraction.Services
 {
     public class DbHelper
     {
-        private AppDbContext dbContext { get; set; }
+        //private AppDbContext dbContext { get; set; }
 
-        private DbContextOptions<AppDbContext> DbContextOptions()
-        {
-            var optionBuilder = new DbContextOptionsBuilder<AppDbContext>();
-            optionBuilder.UseSqlServer(AppSettings.ConfigurationString);
-            return optionBuilder.Options;
-        }
+        //private DbContextOptions<AppDbContext> DbContextOptions()
+        //{
+        //    var optionBuilder = new DbContextOptionsBuilder<AppDbContext>();
+        //    optionBuilder.UseSqlServer(AppSettings.ConfigurationString);
+        //    return optionBuilder.Options;
+        //}
 
-        //getdata
-        public List<ImageOcr> GetAllDocumentDetails()
-        {
-            using var dbContext = new AppDbContext(DbContextOptions());
-            var data = dbContext.ImageOcr.ToList();
-            if (data is null)
-            {
-                return new List<ImageOcr>();
-            }
-            return data;
+        ////getdata
+        //public List<ImageOcr> GetAllDocumentDetails()
+        //{
+        //    using var dbContext = new AppDbContext(DbContextOptions());
+        //    var data = dbContext.ImageOcr.ToList();
+        //    if (data is null)
+        //    {
+        //        return new List<ImageOcr>();
+        //    }
+        //    return data;
 
-        }
-        //seed Data
+        //}
+        ////seed Data
 
-        public void InsertData(ImageOcr imageOcr)
-        {
-            using var dbContext = new AppDbContext(DbContextOptions());
-            dbContext.Add(imageOcr);
-            dbContext.SaveChanges();
-        }
+        //public void InsertData(ImageOcr imageOcr)
+        //{
+        //    using var dbContext = new AppDbContext(DbContextOptions());
+        //    dbContext.Add(imageOcr);
+        //    dbContext.SaveChanges();
+        //}
 
-        public ConfigurationSettings GetTemplateById(string id)
-        {
-            using var dbContext = new AppDbContext(DbContextOptions());
-            var template = dbContext.AttributeConfig.Find(id);
-            if (template != null)
-            {
-                return template;
-            }
-            return null;
-        }
+        //public ConfigurationSettings GetTemplateById(string id)
+        //{
+        //    using var dbContext = new AppDbContext(DbContextOptions());
+        //    var template = dbContext.AttributeConfig.Find(id);
+        //    if (template != null)
+        //    {
+        //        return template;
+        //    }
+        //    return null;
+        //}
     }
 }

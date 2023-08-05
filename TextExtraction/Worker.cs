@@ -1,13 +1,18 @@
+using com.sun.rowset.@internal;
+using com.sun.xml.@internal.ws.api.pipe;
 using edu.stanford.nlp.ie.crf;
 using Emgu.CV;
 using Emgu.CV.CvEnum;
 using Emgu.CV.Structure;
 using Emgu.CV.Util;
 using iTextSharp.text.pdf;
+using Microsoft.EntityFrameworkCore.Storage;
 using NameRecognizer;
 using Newtonsoft.Json;
+using System.Drawing;
 using System.Reflection;
 using System.Reflection.Emit;
+using System.Reflection.Metadata.Ecma335;
 using Tesseract;
 using TextExtraction.APIModels;
 using TextExtraction.Initialization;
@@ -22,24 +27,20 @@ namespace TextExtraction
     {
         private string? _inputPath;
         private string? _outputPath;
+        private string? _pendingPath;
         private string? _ghostScriptPath;
-        private string[]? _primarySerachKeys;
-        private int counter = 0;
-        private DbHelper _dbHelper;
-        private readonly IAPIService service;
         public CRFClassifier? _crfClassifier;
         private TesseractEngine? _engine;
         private readonly ILogger<Worker> _logger;
         private readonly IConfiguration _config;
-        private ConfigurationSettings? _template;
         private Initializer _initializer;
+        private string _tempFolder = Directory.GetCurrentDirectory() + "\\Temp";
+        private bool _isUserLoggedIn { get; set; }
 
-        public Worker(ILogger<Worker> logger, IConfiguration config, DbHelper dbHelper, IAPIService service, Initializer initializer)
+        public Worker(ILogger<Worker> logger, IConfiguration config, Initializer initializer)
         {
             _logger = logger;
             _config = config;
-            _dbHelper = dbHelper;
-            this.service = service;
             _initializer = initializer;
         }
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -48,762 +49,370 @@ namespace TextExtraction
             {
                 _logger.LogInformation("TextExtraction started at: {time}", DateTimeOffset.Now);
                 _inputPath = _config.GetValue<string>("InputFolderPath");
+                _outputPath = _config.GetValue<string>("OutputFolderPath");
+                _pendingPath = _config.GetValue<string>("PendingPath");
+                _ghostScriptPath = _config.GetValue<string>("GhostScript");
+                if (Directory.Exists(_inputPath) && Directory.Exists(_outputPath) && Directory.Exists(_pendingPath) && Directory.Exists(_ghostScriptPath))
+                {
+                    _logger.LogInformation("Directory paths mentioned in AppSettings.json file does not exist. Please verify all folder paths..!");
+                    break;
+                }
+
                 string[] pdfFiles = Directory.GetFiles(_inputPath, "*.pdf");
                 _logger.LogInformation("Pdf count : {count}", pdfFiles.Length);
+
                 if (pdfFiles.Length > 0)
                 {
-                    bool allGood = _initializer.Initialize(ref _crfClassifier, ref _engine, ref _template);
-                    if (allGood)
-                    {
-                        _outputPath = _config.GetValue<string>("OutputFolderPath");
-                        _ghostScriptPath = _config.GetValue<string>("GhostScript");
-                        _primarySerachKeys = _config.GetSection("SearchKeys:PatientKeys").Get<string[]>();
-                        if (!string.IsNullOrEmpty(_inputPath) && !string.IsNullOrEmpty(_outputPath))
-                        {
-                            RunOcr(pdfFiles);
-                        }
-                    }
+                    _engine = _initializer.InitOCR();
+                    _isUserLoggedIn = _initializer.Login();
+                    _logger.LogInformation("Service user logged in : {flag}", _isUserLoggedIn);
+                    if (_engine is not null)
+                        RunOcr(pdfFiles);
+
                 }
-                // Wait for 1 minute before checking the input folder again
+                // Wait for 10 minute before checking the input folder again
                 await Task.Delay(TimeSpan.FromMinutes(10), stoppingToken);
             }
         }
 
-        private bool Initialise()
-        {
-            try
-            {
-
-                bool extractPatientDetails = _config.GetValue<string>("ExtractPatientDetails").IsNullOrEmpty() ? false : System.Convert.ToBoolean(_config.GetValue<string>("ExtractPatientDetails"));
-                string temaplateId = _config.GetValue<string>("TemaplateId").IsNullOrEmpty() ? "" : _config.GetValue<string>("TemaplateId");
-
-                var request = new LoginRequest { UserNameOrEmailAddress = "serviceuser", Password = "1q2w3E*", RememberMe = true };
-
-                LoginResponse? result = service.PostAsync<LoginRequest, LoginResponse?>("api/account/login", request).GetAwaiter().GetResult();
-
-                if (result is not null && result.Description.Equals("Success"))
-                {
-                    _template = service.GetAsync<ConfigurationSettings>($"api/app/config/{temaplateId}").GetAwaiter().GetResult();
-                    if (_template is null)
-                    {
-                        _logger.LogError("No Template found for TemplateId {temaplateId}", temaplateId);
-                        //_template = _dbHelper.GetTemplateById(temaplateId);
-                    }
-                    else
-                    {
-                        _logger.LogInformation("Template recovered from API tamplate ID: {temaplateId}", temaplateId);
-                    }
-                }
-                else
-                {
-                    _logger.LogError("Login API failed");
-                }
-
-                if (extractPatientDetails)
-                {
-                    string? enginePath = Directory.GetCurrentDirectory() + "\\stanford-ner-4.2.0";
-                    _crfClassifier = EntityRecognizer.LoadNLPEngine(enginePath);
-                    if (_crfClassifier is null)
-                    {
-                        _logger.LogError("NLP Engine Initialization failed - path: {path}", enginePath);
-                        return false;
-                    }
-                    _logger.LogInformation("NLP Engine Initialize successfully on {time}", DateTimeOffset.Now);
-                }
-                TesseractEnviornment.CustomSearchPath = Environment.CurrentDirectory;
-
-                _logger.LogInformation("OCR engine Path :{path}", Directory.GetCurrentDirectory() + "\\tessdata");
-                _engine = OCR.Image.LoadEnglishEngine(Directory.GetCurrentDirectory() + "\\tessdata");
-
-                if (_engine != null)
-                {
-                    _logger.LogInformation("OCR Engine Initialize successfully on {time}", DateTimeOffset.Now);
-                    return true;
-                }
-                return false;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError("Engine Initialization failed {ex}", ex);
-                return false;
-            }
-        }
         private void RunOcr(string[] pdfFiles)
         {
-            bool extractInvoiceDetails = _config.GetValue<string>("ExtractInvoiceDetails").IsNullOrEmpty() ? false : System.Convert.ToBoolean(_config.GetValue<string>("ExtractInvoiceDetails"));
-            bool extractPatientDetails = _config.GetValue<string>("ExtractPatientDetails").IsNullOrEmpty() ? false : System.Convert.ToBoolean(_config.GetValue<string>("ExtractPatientDetails"));
-            List<ProcessedPdf> textData = new List<ProcessedPdf>();
             foreach (var pdf in pdfFiles)
             {
-                var document = new ProcessedPdf();
-                document.DocumentId = Guid.NewGuid();
-                document.FileName = Path.GetFileName(pdf);
+                string fileName = Path.GetFileName(pdf);
+                string fileNameWithoutExtension = Path.GetFileNameWithoutExtension(pdf);
+                var fileNumber = fileName.Split('_')[0];
 
-                var streams = Pdf_To_ImageStream.Convert.ToStreams(_ghostScriptPath, pdf);
-
-                if (streams is not null)
+                if (!string.IsNullOrEmpty(fileNumber))
                 {
-                    for (int i = 0; i < streams.Count; i++)
+
+                    string vendorId = _initializer.GetVendorID(fileNumber);
+                    //string vendorId = GetVendorID(fileNumber);
+                    if (string.IsNullOrEmpty(vendorId))
                     {
-                        var page = new PageData();
-                        int j = i;
-                        page.PageNumber = ++j;
+                        if (MoveFile(_inputPath, _pendingPath, fileName))
+                        {
+                            _logger.LogInformation("{filename} move to {path} as no vendor id found.", fileName, _pendingPath);
+                            var request = new NewFile
+                            {
+                                id = Guid.NewGuid(),
+                                filePath = Path.Combine(_pendingPath, fileName)
+                            };
+                            NewFile resp = _initializer.SentToRegistration(request);
+                            if (resp is not null)
+                            {
+                                _logger.LogInformation("{FileName} sent for registration, Its Id is : {id} and created at : {time}", fileName, resp.id, resp.creationTime);
+                            }
+                            else
+                            {
+                                _logger.LogError("Something is wrong with Registration API, Data is not saved, Check FaxVerification Sites logs for more details.");
+                            }
+                            continue;
+                        }
+                        continue;
+                    }
+
+                    Registration? registration = _initializer.GetRegisterTemplate(vendorId);
+                    if (registration is null)
+                    {
+                        if (MoveFile(_inputPath, _pendingPath, fileName))
+                            _logger.LogInformation("{filename} move to {path} as no template registered.", fileName, _pendingPath);
+                        continue;
+                    }
+                    var streams = Pdf_To_ImageStream.Convert.ToStreams(_ghostScriptPath, pdf);
+
+                    if (streams is not null)
+                    {
+                        TextExtractionFields textExtraction = new TextExtractionFields();
                         try
                         {
-                            page = GetPageFromTiffImageStream(_engine, streams[i], page, out float confidence);
-                            document.Confidence += confidence;
+                            var rootObj = JsonConvert.DeserializeObject<Rootobject>(registration.OCRConfig);
+                            if (rootObj is not null)
+                            {
+                                foreach (var item in rootObj.AdditionalFields)
+                                {
+                                    if (item.PageNumber <= 0)
+                                    {
+                                        continue;
+                                    }
+                                    int pno = item.PageNumber - 1;
+                                    Rect rect = ConvertCords(item.Rectangle);
+                                    if (rect.Width <= 0 || rect.Height <= 0)
+                                        continue;
+                                    if (item.Text == "Table" || item.FieldName == "TableCordinates")
+                                    {
+                                        Bitmap source = new Bitmap(streams[pno]);
+                                        Rectangle section = new Rectangle(new Point(rect.X1, rect.Y1), new Size(rect.Width, rect.Height));
+                                        Bitmap CroppedImage = CropImage(source, section);
+
+                                        string imagePath = Path.Combine(_tempFolder, fileNameWithoutExtension + ".TIFF");
+                                        string tableImagePath = Path.Combine(_tempFolder, fileNameWithoutExtension + "_table.TIFF");
+                                        CroppedImage.Save(imagePath);
+                                        CroppedImage.Save(tableImagePath);
+                                        GetTable(textExtraction, imagePath, tableImagePath);
+                                        continue;
+                                    }
+                                    using var image = Pix.LoadTiffFromMemory(streams[pno].ToArray());
+                                    using var page = _engine.Process(image, rect);
+                                    textExtraction.Invoice.AdditionalFields.Add(
+                                                                                    new Field
+                                                                                    {
+                                                                                        FieldName = item.FieldName,
+                                                                                        Text = page.GetText().Trim(),
+                                                                                        PageNumber = item.PageNumber,
+                                                                                        Confidence = page.GetMeanConfidence() * 100,
+                                                                                        Rectangle = item.Rectangle
+                                                                                    });
+
+                                }
+                                _logger.LogInformation("Data extraction is Completed..!");
+                                CopyToArchive(_inputPath, fileName);
+
+                                bool testing = _config.GetValue<string>("Testing").IsNullOrEmpty() ? false : System.Convert.ToBoolean(_config.GetValue<string>("Testing"));
+                                if (testing)
+                                {
+                                    _logger.LogInformation("Output: {textExtraction}", JsonConvert.SerializeObject(textExtraction));
+                                    continue; ;
+                                }
+
+                                var isMoved = MoveFile(_inputPath, _outputPath, fileName);
+                                if (isMoved)
+                                {
+                                    _logger.LogInformation("{filename} is processed and move to {path}", fileName, _outputPath);
+                                    var request = new ImageOcr
+                                    {
+                                        Confidence = "0",
+                                        InputPath = Path.Combine(_inputPath, fileName),
+                                        OutputPath = Path.Combine(_outputPath, fileName),
+                                        OCRText = "",
+                                        Output = JsonConvert.SerializeObject(textExtraction)
+                                    };
+                                    ImageOcrResponse resp = _initializer.SaveOCRData(request);
+                                    if (resp is not null)
+                                    {
+                                        _logger.LogInformation("{FileName} data is saved Successfully, Its Id is : {id} and created at : {time}", fileName, resp.id, resp.creationTime);
+                                    }
+                                    else
+                                    {
+                                        _logger.LogError("Something is wrong with OCR API, Data is not saved, Check FaxVerification Sites logs for more details.");
+                                    }
+                                }
+                            }
                         }
                         catch (Exception ex)
                         {
-                            _logger.LogError("Error in GetPageFromTiffImageStream, {ex}", ex);
+                            _logger.LogError("Error Occured..!\n {ex}", ex);
                         }
-                        document.Pages.Add(page);
                     }
-                    document.Confidence /= streams.Count();
                 }
-                textData.Add(document);
-            }
-
-            if (extractPatientDetails)
-            {
-                _logger.LogInformation("Patient Details extraction started at: {time}", DateTimeOffset.Now);
-                ExtractMedicalData(textData);
-            }
-            if (extractInvoiceDetails)
-            {
-                _logger.LogInformation("Invoice Details extraction started at: {time}", DateTimeOffset.Now);
-                ExtractInvoiceData(textData);
+                else
+                {
+                    _logger.LogInformation("Cannot fetch first 8 digits of file {fileName}, Skiped from extraction.", fileName);
+                    continue;
+                }
             }
         }
-        private PageData GetPageFromTiffImageStream(TesseractEngine engine, MemoryStream stream, PageData pageData, out float confidence)
+
+        private string? GetVendorID(string fileNumber)
+        {
+            //Here we will call an API which will eventually return a vendorId by sending the fileNumber
+            List<FileKey> fileKeys = _config.GetSection("FileKey").Get<List<FileKey>>();
+
+            foreach (var obj in fileKeys)
+            {
+                if (obj.Key.Equals(fileNumber))
+                    return obj.VendorId;
+            }
+            return string.Empty;
+        }
+
+        public Rect ConvertCords(string cords)
         {
             try
             {
-                using var image = Pix.LoadTiffFromMemory(stream.ToArray());
-                using var page = engine.Process(image);
-                confidence = page.GetMeanConfidence();
-                using var iter = page.GetIterator();
-                iter.Begin();
-                LineData lineData;
-                WordData wordData;
-                int srNo = 1;
-                do
-                {
-                    do
-                    {
-                        do
-                        {
-                            lineData = new();
-                            do
-                            {
-                                wordData = new();
-                                string resultText = iter.GetText(PageIteratorLevel.Word);
-                                resultText = FilterData.RemoveSpecialCharacters(resultText);
-                                if (!string.IsNullOrWhiteSpace(resultText))
-                                {
-                                    wordData.Text = resultText;
-                                    iter.TryGetBoundingBox(PageIteratorLevel.Word, out Rect bound);
-                                    wordData.Coordinates = bound;
-                                    lineData.Words.Add(wordData);
-                                }
+                string[] arr = cords.Split(',');
 
-                                if (iter.IsAtFinalOf(PageIteratorLevel.TextLine, PageIteratorLevel.Word))
-                                {
-                                    string lineText = iter.GetText(PageIteratorLevel.TextLine);
-                                    lineText = FilterData.RemoveSpecialCharacters(lineText);
-                                    if (!string.IsNullOrWhiteSpace(lineText))
-                                    {
-                                        lineData.LineNumber = srNo++;
-                                        lineData.Text = lineText;
-                                        iter.TryGetBoundingBox(PageIteratorLevel.TextLine, out Rect bound);
-                                        lineData.LineCoordinates = bound;
-                                        pageData.Lines.Add(lineData);
-                                    }
-                                }
-                            } while (iter.Next(PageIteratorLevel.TextLine, PageIteratorLevel.Word));
-                        } while (iter.Next(PageIteratorLevel.Para, PageIteratorLevel.TextLine));
-                    } while (iter.Next(PageIteratorLevel.Block, PageIteratorLevel.Para));
-                } while (iter.Next(PageIteratorLevel.Block));
+                double X = Convert.ToDouble(arr[0]);
+                double Y = Convert.ToDouble(arr[1]);
+                double W = Convert.ToDouble(arr[2]);
+                double H = Convert.ToDouble(arr[3]);
 
-                return pageData;
+                W = (W - X) * 4.166666666666667;
+                H = (H - Y) * 4.166666666666667;
+                X = X * 4.166666666666667;
+                Y = Y * 4.166666666666667;
+                int x = Convert.ToInt32(X);
+                int y = Convert.ToInt32(Y);
+                int w = Convert.ToInt32(W);
+                int h = Convert.ToInt32(H);
+                return new Rect(x, y, w, h);
             }
             catch (Exception ex)
             {
-                throw;
+                _logger.LogError($"Error Converting cords\n {ex}");
+            }
+            return new Rect(); ;
+        }
+
+        public Bitmap CropImage(Bitmap source, Rectangle section)
+        {
+            var bitmap = new Bitmap(section.Width, section.Height);
+            using (var g = Graphics.FromImage(bitmap))
+            {
+                g.DrawImage(source, 0, 0, section, GraphicsUnit.Pixel);
+                return bitmap;
             }
         }
-        private void ExtractMedicalData(List<ProcessedPdf> textData)
+
+        public void GetTable(TextExtractionFields textExtraction,string imagePath, string tableImagePath)
         {
-            foreach (var documents in textData)
+            try
             {
-                List<DrawCoordinates> cords = new();
-                TextExtractionFields textExtraction = new TextExtractionFields();
-
-                foreach (var addField in _template.Fields)
-                {
-                    var newProp = GetObject(addField.FieldName);
-                    textExtraction.Invoice.AdditionalFields.Add(newProp);
-
-                }
-
-                foreach (var page in documents.Pages)
-                {
-                    var details = new DrawCoordinates { PageNumber = page.PageNumber };
-                    foreach (var line in page.Lines)
-                    {
-                        string filteredText = FilterData.RemoveSpecialCharacters(line.Text).ToUpper();
-
-                        if (_primarySerachKeys.Any(filteredText.Contains))
-                        {
-                            if (string.IsNullOrEmpty(textExtraction.Patient.BirthDate.Text))
-                            {
-                                PatientBirthDate.Extract(line, page.PageNumber, details.Rects, textExtraction.Patient.BirthDate);
-                            }
-
-
-                            if (string.IsNullOrEmpty(textExtraction.Patient.Name.Text))
-                            {
-                                PatientName.Extract(line, page.PageNumber, details.Rects, textExtraction.Patient.Name, _crfClassifier);
-                            }
-                        }
-                        else if (!string.IsNullOrEmpty(textExtraction.Patient.Name.Text) && !string.IsNullOrEmpty(textExtraction.Patient.BirthDate.Text))
-                        {
-                            break;
-                        }
-
-                        bool enableEncryption = _config.GetValue<string>("EnableEncryption").IsNullOrEmpty() ? false : System.Convert.ToBoolean(_config.GetValue<string>("EnableEncryption"));
-
-                        if (enableEncryption)
-                        {
-                            if (!string.IsNullOrEmpty(textExtraction.Patient.Name.Text))
-                            {
-                                textExtraction.Patient.Name.Text = CryptLib.Encrypt(textExtraction.Patient.Name.Text);
-                            }
-                            if (!string.IsNullOrEmpty(textExtraction.Patient.BirthDate.Text))
-                            {
-                                textExtraction.Patient.BirthDate.Text = CryptLib.Encrypt(textExtraction.Patient.BirthDate.Text);
-                            }
-                        }
-                    }
-                    if (details.Rects.Count > 0)
-                    {
-                        cords.Add(details);
-                    }
-                }
-                HighliightPdf(documents, cords);
-
-                bool testing = _config.GetValue<string>("Testing").IsNullOrEmpty() ? false : System.Convert.ToBoolean(_config.GetValue<string>("Testing"));
-                if (testing)
-                {
-                    _logger.LogInformation("Output: {textExtraction}", JsonConvert.SerializeObject(textExtraction));
-                }
-                else
-                {
-                    var request = new ImageOcr
-                    {
-                        Confidence = string.Format("{0:0.00}", documents.Confidence),
-                        InputPath = Path.Combine(_inputPath, documents.FileName),
-                        OutputPath = Path.Combine(_outputPath, documents.FileName),
-                        OCRText = JsonConvert.SerializeObject(documents.Pages),
-                        Output = JsonConvert.SerializeObject(textExtraction),
-                    };
-
-                    ImageOcrResponse? result = service.PostAsync<ImageOcr, ImageOcrResponse?>("api/app/ocr", request).GetAwaiter().GetResult();
-                    if (result is not null)
-                    {
-                        _logger.LogInformation("OCR and extraction id done for {FileName}, Its Id is : {id} and created at : {time}", documents.FileName, result.id, result.creationTime);
-                    }
-                    else
-                    {
-                        _logger.LogError("Something is wrong with OCR API, Check FaxVerification Sites logs for more details.");
-                    }
-
-                    //_dbHelper.InsertData(new ImageOcr
-                    //{
-                    //    Confidence = string.Format("{0:0.00}", documents.Confidence),
-                    //    InputPath = Path.Combine(_inputPath, documents.FileName),
-                    //    OutputPath = Path.Combine(_outputPath, documents.FileName),
-                    //    OCRText = JsonConvert.SerializeObject(documents.Pages),
-                    //    Output = JsonConvert.SerializeObject(textExtraction),
-                    //});
-                }
-            }
-
-            _logger.LogInformation("Patient details extraction job is done...!");
-        }
-        private void ExtractInvoiceData(List<ProcessedPdf> textData)
-        {
-            Array.Clear(_primarySerachKeys, 0, _primarySerachKeys.Length);
-
-            _primarySerachKeys = _config.GetSection("SearchKeys:InvoiceKeys").Get<string[]>();
-
-            foreach (var documents in textData)
-            {
-                List<DrawCoordinates> cords = new();
-                TextExtractionFields textExtraction = new TextExtractionFields();
-
-                foreach (var addField in _template.Fields)
-                {
-                    var newProp = GetObject(addField.FieldName);
-                    textExtraction.Invoice.AdditionalFields.Add(newProp);
-                }
-                foreach (var page in documents.Pages)
-                {
-                    //var details = new DrawCoordinates { PageNumber = page.PageNumber };
-
-                    foreach (var line in page.Lines)
-                    {
-                        _primarySerachKeys = _primarySerachKeys.Select(x => x.ToUpper()).ToArray();
-
-                        line.Text = line.Text.ToUpper();
-
-                        #region Jugad code may be delete later
-                        //string? orgName = EntityRecognizer.GetOrganizationName(line.Text, _crfClassifier);
-                        //if (!string.IsNullOrEmpty(orgName)) //&& string.IsNullOrEmpty(textExtraction.Invoice.Supplier.CompanyName))
-                        //{
-                        //    var reallyAOrg = Regex.Match(orgName, @"\b\W+INC|LLC$\b");
-                        //    if (reallyAOrg.Success && string.IsNullOrEmpty(textExtraction.Invoice.Supplier.CompanyName))
-                        //    {
-                        //        textExtraction.Invoice.Supplier.CompanyName = orgName;
-                        //    } 
-                        //} 
-                        #endregion
-
-                        if (_primarySerachKeys.Any(line.Text.Contains))
-                        {
-                            if (string.IsNullOrEmpty(textExtraction.Invoice.InvNum.Text))
-                            {
-                                bool flag = InvoiceNumber.Extract(line, page.PageNumber, textExtraction.Invoice.InvNum /*,details.Rects*/);
-                                if (flag)
-                                {
-                                    continue;
-                                }
-                            }
-
-                            if (string.IsNullOrEmpty(textExtraction.Invoice.InvDate.Text))
-                            {
-                                bool flag = InvoiceDate.Extract(line, page.PageNumber, textExtraction.Invoice.InvDate /*,details.Rects,*/);
-                                if (flag)
-                                {
-                                    continue;
-                                }
-                            }
-
-                            if (string.IsNullOrEmpty(textExtraction.Invoice.OrderNum.Text))
-                            {
-                                bool flag = PurchaseOrder.Extract(line, page.PageNumber, textExtraction.Invoice.OrderNum /*,details.Rects,*/);
-                                if (flag)
-                                {
-                                    continue;
-                                }
-                            }
-
-                            if (string.IsNullOrEmpty(textExtraction.Invoice.OrderDate.Text))
-                            {
-                                bool flag = PurchaseOrderDate.Extract(line, page.PageNumber, textExtraction.Invoice.OrderDate /*,details.Rects,*/);
-                                if (flag)
-                                {
-                                    continue;
-                                }
-                            }
-
-                            if (string.IsNullOrEmpty(textExtraction.Invoice.GrossAmount.Text))
-                            {
-                                bool flag = GrossAmount.Extract(line, page.PageNumber, textExtraction.Invoice.GrossAmount /*, details.Rects,*/);
-                                if (flag)
-                                {
-                                    continue;
-                                }
-                            }
-
-                            if (string.IsNullOrEmpty(textExtraction.Invoice.InvoiceAmount.Text))
-                            {
-                                bool flag = GrossAmount.Extract(line, page.PageNumber, textExtraction.Invoice.InvoiceAmount /*, details.Rects,*/);
-                                if (flag)
-                                {
-                                    continue;
-                                }
-                            }
-
-                            if (string.IsNullOrEmpty(textExtraction.Invoice.TaxAmount.Text))
-                            {
-                                bool flag = Tax.Extract(line, page.PageNumber, textExtraction.Invoice.TaxAmount /*, details.Rects,*/);
-                                if (flag)
-                                {
-                                    continue;
-                                }
-                            }
-
-                            if (string.IsNullOrEmpty(textExtraction.Invoice.VendorNum.Text))
-                            {
-                                bool flag = VenderNumber.Extract(line, page.PageNumber, textExtraction.Invoice.VendorNum /*, details.Rects,*/);
-                                if (flag)
-                                {
-                                    continue;
-                                }
-                            }
-
-
-
-                            #region Payment Due date
-                            //var invoiceDueDate = Regex.Match(line.Text, @"\b(DUE DATE)\W+");
-                            //if (invoiceDueDate.Success && string.IsNullOrEmpty(textExtraction.Invoice.OrderDate.Text))
-                            //{
-                            //    var date = EntityRecognizer.RecognizeDate(line.Text).ToUpper();
-                            //    if (string.IsNullOrEmpty(date)) continue;
-                            //    textExtraction.Invoice.Payment.DueDate = date;
-                            //    // Console.WriteLine("Due date :" + date);
-                            //    var dueDate = line.Words.SingleOrDefault(x => x.Text.Equals(date, StringComparison.OrdinalIgnoreCase))?.Coordinates;
-                            //    if (dueDate is null)
-                            //    {
-                            //        var arr = date.Split(' ');
-                            //        int x1 = 0, y1 = 0, x2 = 0, y2 = 0;
-                            //        for (int i = 0; i < arr.Length; i++)
-                            //        {
-                            //            var a = line.Words.SingleOrDefault(x => x.Text.Equals(arr[i], StringComparison.OrdinalIgnoreCase))?.Coordinates;
-                            //            if (i == 0)
-                            //            {
-                            //                if (a is not null)
-                            //                {
-                            //                    x1 = a.Value.X1;
-                            //                    y1 = a.Value.Y1;
-                            //                }
-                            //            }
-                            //            else if (i == arr.Length - 1)
-                            //            {
-                            //                x2 = a.Value.X2;
-                            //                y2 = a.Value.Y2;
-                            //            }
-                            //        }
-                            //        details.Rects.Add(Rect.FromCoords(x1, y1, x2, y2));
-                            //    }
-                            //    else
-                            //    {
-                            //        details.Rects.Add(dueDate.Value);
-                            //    }
-                            //} 
-                            #endregion
-                        }
-                    }
-                    //if (details.Rects.Count > 0)
-                    //{
-                    //    cords.Add(details);
-                    //}
-
-                    foreach (var newField in textExtraction.Invoice.AdditionalFields)
-                    {
-                        string prop = GetProperty(newField, "Text");
-                        if (string.IsNullOrEmpty(prop))
-                        {
-                            string fieldName = GetProperty(newField, "FieldName");
-                            switch (fieldName)
-                            {
-                                case "Vendor Name":
-                                    SetProperty(newField, "Text", textExtraction.Invoice.VendorName.Text);
-                                    SetProperty(newField, "Rectangle", textExtraction.Invoice.VendorName.Rectangle);
-                                    SetProperty(newField, "PageNumber", textExtraction.Invoice.VendorName.PageNumber);
-                                    break;
-                                case "Invoice No":
-                                    SetProperty(newField, "Text", textExtraction.Invoice.InvNum.Text);
-                                    SetProperty(newField, "Rectangle", textExtraction.Invoice.InvNum.Rectangle);
-                                    SetProperty(newField, "PageNumber", textExtraction.Invoice.InvNum.PageNumber);
-                                    break;
-                                case "PO Type":
-                                    //SetProperty(newField, "Text", textExtraction.Invoice.InvNum.Text);
-                                    //SetProperty(newField, "Rectangle", textExtraction.Invoice.InvNum.Rectangle);
-                                    //SetProperty(newField, "PageNumber", textExtraction.Invoice.InvNum.PageNumber);
-                                    break;
-                                case "Due Dt":
-                                    SetProperty(newField, "Text", textExtraction.Invoice.OrderDate.Text);
-                                    SetProperty(newField, "Rectangle", textExtraction.Invoice.OrderDate.Rectangle);
-                                    SetProperty(newField, "PageNumber", textExtraction.Invoice.OrderDate.PageNumber);
-                                    break;
-                                case "Vendor No":
-                                    SetProperty(newField, "Text", textExtraction.Invoice.VendorNum.Text);
-                                    SetProperty(newField, "Rectangle", textExtraction.Invoice.VendorNum.Rectangle);
-                                    SetProperty(newField, "PageNumber", textExtraction.Invoice.VendorNum.PageNumber);
-                                    break;
-                                case "Gross Amount":
-                                    SetProperty(newField, "Text", textExtraction.Invoice.GrossAmount.Text);
-                                    SetProperty(newField, "Rectangle", textExtraction.Invoice.GrossAmount.Rectangle);
-                                    SetProperty(newField, "PageNumber", textExtraction.Invoice.GrossAmount.PageNumber);
-                                    break;
-                                case "Tax Amount":
-                                    SetProperty(newField, "Text", textExtraction.Invoice.TaxAmount.Text);
-                                    SetProperty(newField, "Rectangle", textExtraction.Invoice.TaxAmount.Rectangle);
-                                    SetProperty(newField, "PageNumber", textExtraction.Invoice.TaxAmount.PageNumber);
-                                    break;
-                                case "PO Number":
-                                    SetProperty(newField, "Text", textExtraction.Invoice.OrderNum.Text);
-                                    SetProperty(newField, "Rectangle", textExtraction.Invoice.OrderNum.Rectangle);
-                                    SetProperty(newField, "PageNumber", textExtraction.Invoice.OrderNum.PageNumber);
-                                    break;
-                                case "Inv Amount":
-                                    SetProperty(newField, "Text", textExtraction.Invoice.InvoiceAmount.Text);
-                                    SetProperty(newField, "Rectangle", textExtraction.Invoice.InvoiceAmount.Rectangle);
-                                    SetProperty(newField, "PageNumber", textExtraction.Invoice.InvoiceAmount.PageNumber);
-                                    break;
-                                case "Invoice Dt":
-                                    SetProperty(newField, "Text", textExtraction.Invoice.InvDate.Text);
-                                    SetProperty(newField, "Rectangle", textExtraction.Invoice.InvDate.Rectangle);
-                                    SetProperty(newField, "PageNumber", textExtraction.Invoice.InvDate.PageNumber);
-                                    break;
-                                default:
-                                    //string regex = _template.Fields.FirstOrDefault(x => x.FieldName.Equals(fieldName)).RegExpression;
-                                    //var additionalFields = Regex.Match(line.Text, regex);
-                                    //if (additionalFields.Success)
-                                    //{
-                                    //    SetProperty(newField, "Text", additionalFields.Value);
-                                    //    string rectangle = Helper.ConvertToPdfPoints(line.LineCoordinates);
-                                    //    SetProperty(newField, "Rectangle", rectangle);
-                                    //    SetProperty(newField, "PageNumber", page.PageNumber);
-                                    //}
-                                    break;
-                            }
-                        }
-                    }
-                }
-
-                //Extract table
-                var table = new List<Table>();
                 var cells = new List<System.Drawing.Rectangle>();
-                string imagePath = Path.Combine(Directory.GetCurrentDirectory(), Path.GetFileNameWithoutExtension(documents.FileName) + ".tiff");
                 var im = new Emgu.CV.Image<Bgr, byte>(imagePath);
                 var gray = im.Convert<Gray, byte>();
                 var binary = gray.ThresholdBinary(new Gray(100), new Gray(155));
-                //var cells = new List<System.Drawing.Rectangle>();
+                im.Save(imagePath);
                 var contours = new VectorOfVectorOfPoint();
                 CvInvoke.FindContours(binary, contours, null, RetrType.List, ChainApproxMethod.ChainApproxSimple);
-                int cell =0;
                 int index = 0;
-                //filter out text contours by checking the size
-
-                //int loop = contours.Size - 1;
-                //for (int k = loop; k > 0; k--)
-                for (int k = 0; k < contours.Size ; k++)
+                using var image = Pix.LoadFromFile(imagePath);
+                int loop = contours.Size - 1;
+                for (int k = loop; k > 0; k--) //for (int k = 0; k < contours.Size; k++)
                 {
-                    //get the area of the contour
                     var area = CvInvoke.ContourArea(contours[k]);
-
-                    // filter out text contours using the area
                     if (area > 5000 && area < 200000)
                     {
-                        //check if the shape of the contour is a square or a rectangle
                         var rect = CvInvoke.BoundingRectangle(contours[k]);
-                        //var aspectRatio = (double)rect.Width / rect.Height;
-                        //cell++;
-                        //if (cell >= 10 && cell <= 44)
-                        //{
-                            //add the cell to the list
-                            cells.Add(rect);
-                            //Rect roi = new Rect(rect.X, rect.Y, rect.Width, rect.Height);
-                            //using var image = Pix.LoadFromFile(imagePath);
-                            //using (var page = _engine.Process(image, roi))
-                            //{
-                            //    string txt = page.GetText().Trim();
-                            //    if(txt.IsNullOrEmpty())
-                            //    {
-                            //        continue;
-                            //    }
-                            //    textExtraction.Invoice.TableDetails.Add(new Table { CellNo = index++, Text = txt });
-                                
-                            //    var lst = textExtraction.Invoice.TableDetails.
-                                
-                            //}
-                        //}
-                    }
-                }
+                        cells.Add(rect);
+                        Rect roi = new Rect(rect.X, rect.Y, rect.Width, rect.Height);
+                        using var page = _engine.Process(image, roi);
+                        string txt = page.GetText().Trim();
 
-
-                bool testing = _config.GetValue<string>("Testing").IsNullOrEmpty() ? false : System.Convert.ToBoolean(_config.GetValue<string>("Testing"));
-                if (testing)
-                {
-                    _logger.LogInformation("Output: {textExtraction}", JsonConvert.SerializeObject(textExtraction));
-                }
-                else
-                {
-                    var request = new ImageOcr
-                    {
-                        Confidence = string.Format("{0:0.00}", documents.Confidence),
-                        InputPath = Path.Combine(_inputPath, documents.FileName),
-                        OutputPath = Path.Combine(_outputPath, documents.FileName),
-                        OCRText = JsonConvert.SerializeObject(documents.Pages),
-                        Output = JsonConvert.SerializeObject(textExtraction)
-                    };
-                    ImageOcrResponse? result = service.PostAsync<ImageOcr, ImageOcrResponse?>("api/app/ocr", request).GetAwaiter().GetResult();
-                    if (result is not null && result.id != string.Empty)
-                    {
-                        _logger.LogInformation("OCR and extraction id done for {FileName}, Its Id is : {id} and created at : {time}", documents.FileName, result.id, result.creationTime);
-                        HighliightPdf(documents, cords);
-                    }
-                    else
-                    {
-                        _logger.LogError("Something is wrong with OCR API, Check FaxVerification Sites logs for more details.");
-                    }
-                }
-            }
-            _logger.LogInformation("Invoice details extraction job is done...!");
-        }
-        private void HighliightPdf(ProcessedPdf documents, List<DrawCoordinates> PageCords)
-        {
-            bool enableHighlight = _config.GetValue<string>("EnableHighlight").IsNullOrEmpty() ? false : System.Convert.ToBoolean(_config.GetValue<string>("EnableHighlight"));
-            if (enableHighlight)
-            {
-                string path = Path.Combine(_inputPath, documents.FileName);
-                string outputPath = Path.Combine(_outputPath, documents.FileName);
-                float constant = 4.166666666666667f;
-
-                PdfReader reader = new PdfReader(path);
-                using FileStream fs = new FileStream(outputPath, FileMode.Create, FileAccess.Write, FileShare.None);
-                using PdfStamper stamper = new(reader, fs);
-                foreach (var page in PageCords)
-                {
-                    try
-                    {
-                        iTextSharp.text.Rectangle rectangle = reader.GetPageSize(page.PageNumber);
-
-                        foreach (var rect in page.Rects)
+                        if (txt.IsNullOrEmpty())
                         {
-
-                            float newX1 = rect.X1 / constant;
-                            float newY1 = rectangle.Height - (rect.Y1 / constant);
-                            float newX2 = rect.X2 / constant;
-                            float newY2 = rectangle.Height - (rect.Y2 / constant);
-                            //Create an array of quad points based on that rectangle. NOTE: The order below doesn't appear to match the actual spec but is what Acrobat produces
-                            iTextSharp.text.Rectangle newRect = new iTextSharp.text.Rectangle(newX1, newY1, newX2, newY2);
-                            float[] quad = { newRect.Right, newRect.Bottom, newRect.Left, newRect.Bottom, newRect.Right, newRect.Top, newRect.Left, newRect.Top };
-                            //_logger.LogInformation($"quad points : {newRect.Right}, {newRect.Bottom}, {newRect.Left}, {newRect.Bottom}, {newRect.Right}, {newRect.Top}, {newRect.Left}, {newRect.Top} ");
-
-                            //Create our hightlight
-                            PdfAnnotation highlight = PdfAnnotation.CreateMarkup(stamper.Writer, newRect, null, PdfAnnotation.MARKUP_HIGHLIGHT, quad);
-
-                            //Set the color
-                            highlight.Color = iTextSharp.text.BaseColor.YELLOW;
-
-                            //Add the annotation
-                            stamper.AddAnnotation(highlight, page.PageNumber);
+                            textExtraction.Invoice.TableDetails.Cells.Add(new Cell { CellNo = index++, Text = string.Empty, Confidence = page.GetMeanConfidence() * 100 });
+                            continue;
                         }
+
+                        DrawRect(rect.X, rect.Y, rect.Width, rect.Height, index, tableImagePath);
+                        textExtraction.Invoice.TableDetails.Cells.Add(new Cell { CellNo = index++, Text = txt, Confidence = page.GetMeanConfidence() * 100 });
                     }
-                    catch (Exception ex)
+                }
+
+                var Rows = cells.GroupBy(x => x.X).OrderBy(i => i.Key);
+
+                foreach (var item in Rows)
+                {
+                    if (textExtraction.Invoice.TableDetails.Rows <= item.Count())
                     {
-                        _logger.LogError("Error in HighliightPdf {ex}", ex);
+                        textExtraction.Invoice.TableDetails.Rows = item.Count();
+                    }
+                }
+
+                var Cols = cells.GroupBy(x => x.Y).OrderByDescending(i => i.Key);
+                foreach (var item in Cols)
+                {
+                    if (textExtraction.Invoice.TableDetails.Columns <= item.Count())
+                    {
+                        textExtraction.Invoice.TableDetails.Columns = item.Count();
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError("Error while extracting Table details\n{ex}", ex);
+            }
+            finally
+            {
+                Thread.Sleep(300);
+                GC.Collect();
+                File.Delete(imagePath);
+            }
+        }
+
+        public bool MoveFile(string source, string destination, string fileName)
+        {
+            try
+            {
+                Thread.Sleep(3000);
+                GC.Collect();
+
+                if (!File.Exists(Path.Combine(destination, fileName)))
+                {
+                    File.Move(Path.Combine(source, fileName), Path.Combine(destination, fileName));
+                    return true;
+                }
+                File.Delete(Path.Combine(source, fileName));
+                return true;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError("Cannot move file.\n {ex}", ex);
+                return false;
+            }
+        }
+        public void CopyToArchive(string source, string fileName)
+        {
+            string? archive = _config.GetValue<string>("ArchiveFolder");
+            if (!string.IsNullOrEmpty(archive))
+            {
+                if (!File.Exists(Path.Combine(archive, fileName)))
+                {
+                    File.Copy(Path.Combine(source, fileName), Path.Combine(archive, fileName));
+                }
+            }
+        }
+
+        public static void DrawRect(int x, int y, int width, int height, int index, string imagePath)
+        {
+            using (System.Drawing.Image image = System.Drawing.Image.FromFile(imagePath))
+            {
+                // Create a graphics object to draw on the image
+                using (Graphics graphics = Graphics.FromImage(image))
+                {
+                    Random random = new Random();
+
+                    // Generate random values for each RGB component
+                    int red = random.Next(256);
+                    int green = random.Next(256);
+                    int blue = random.Next(256);
+
+                    // Create a new Color object using the random RGB values
+                    Color randomColor = Color.FromArgb(red, green, blue);
+
+                    float x1 = x - 30;
+                    float y1 = y+3;
+                    using (Pen pen = new Pen(Color.DarkRed, 2))
+                    {
+                        graphics.DrawRectangle(pen, x, y, width, height);
+                        graphics.DrawString(index.ToString(), new System.Drawing.Font("Arial", 14,FontStyle.Bold), new SolidBrush(Color.DarkRed), x1, y1);
                     }
 
-                    #region Pixel to Point concept
-                    // W:612 H:792 points, where 1 point contains = 1/72 = 0.0138888888888889 pixel here 72 is standard number for pdf documents
-                    // W:8.5 H: 11 inch
-                    // 1 inch = 72 pixel
-                    // Tiff image DPI = 300 means 300 pixel in 1 inch
-                    // 300 / 72 = 4.166666666666667 pixel
-                    // So pdf pixel size will be
-                    // W: 612 x 4.166666666666667 H:792 x 4.166666666666667
-                    // W : 2550 H: 3300 pixel
-
-                    // Now we have rectangle Coords as Pixel so to highlight it on pdf convert them to points
-                    // x1 = 1526 pixel / 4.166666666666667 = 326.24 points
-                    // y1 = 552 pixel / 4.166666666666667 = 132.48 points
-                    // x2 = 2308 pixel / 4.166666666666667 = 553.92 points
-                    //y2 = 603 pixel / 4.166666666666667 = 144.72 points
-
-                    //float w = (rectangle.Width * (300 / 72));
-                    //float x_scale = rectangle.Width / w;
-                    //float h = (rectangle.Height * (300 / 72));
-                    //float y_scale = rectangle.Height / h; 
-                    #endregion
                 }
 
-                File.Delete(Path.Combine(_inputPath, documents.FileName));
-            }
-            if (File.Exists(Path.Combine(_outputPath, documents.FileName)))
-            {
-                _logger.LogInformation("{filename} already exist to path : {path}", documents.FileName, _outputPath);
-            }
-            else
-            {
-                File.Move(Path.Combine(_inputPath, documents.FileName), Path.Combine(_outputPath, documents.FileName));
-                _logger.LogInformation("{filename} move to path : {path}", documents.FileName, _outputPath);
+                // Save the modified image to a temporary file
+                string tempImagePath = Path.Combine(Path.GetDirectoryName(imagePath), index.ToString() + Path.GetExtension(imagePath));
+                image.Save(tempImagePath);
+
+                // Close the original image file
+                image.Dispose();
+
+                // Delete the original image file
+                Thread.Sleep(200);
+                GC.Collect();
+                File.Delete(imagePath);
+
+                // Rename the temporary file to the original filename
+                File.Move(tempImagePath, imagePath);
             }
         }
 
-        private void DeleteFiles(string[] pdfFiles)
+        public class FileKey
         {
-            foreach (var item in pdfFiles)
-            {
-                try
-                {
-                    GC.Collect();
-                    GC.WaitForPendingFinalizers();
-                    Task.Delay(3000).Wait();
-                    FileInfo file = new FileInfo(item);
-                    file.Delete();
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError("Error in DeleteFiles {ex}", ex);
-                }
-            }
+            public string Key { get; set; }
+            public string VendorId { get; set; }
         }
-
-        private dynamic GetObject(string propertyName)
-        {
-            // Create a dynamic object similar to InvoiceNumber
-            var dynamicObject = CreateDynamicObject(propertyName, typeof(DynamicObject));
-
-            //// Set values for the properties of the dynamic object
-            SetProperty(dynamicObject, "FieldName", propertyName);
-            SetProperty(dynamicObject, "Text", "");
-            SetProperty(dynamicObject, "PageNumber", 0);
-            SetProperty(dynamicObject, "Rectangle", "");
-
-            //// Access the values from the dynamic object
-            //var text = GetProperty(dynamicObject, "Text");
-            //var pageNumber = GetProperty(dynamicObject, "PageNumber");
-            //var rectangle = GetProperty(dynamicObject, "Rectangle");
-
-            return dynamicObject;
-        }
-
-        public static object CreateDynamicObject(string typeName, System.Type baseType)
-        {
-            var assemblyBuilder = AssemblyBuilder.DefineDynamicAssembly(new AssemblyName("DynamicAssembly"), AssemblyBuilderAccess.Run);
-
-            var moduleBuilder = assemblyBuilder.DefineDynamicModule("DynamicModule");
-
-            var typeBuilder = moduleBuilder.DefineType(typeName, TypeAttributes.Public, baseType);
-
-            var dynamicType = typeBuilder.CreateType();
-
-            var dynamicObject = Activator.CreateInstance(dynamicType);
-
-            return dynamicObject;
-        }
-
-        public static void SetProperty(object obj, string propertyName, object value)
-        {
-            var property = obj.GetType().GetProperty(propertyName);
-            if (property != null && property.CanWrite)
-            {
-                property.SetValue(obj, Convert.ChangeType(value, property.PropertyType));
-            }
-        }
-
-        public static object GetProperty(object obj, string propertyName)
-        {
-            var property = obj.GetType().GetProperty(propertyName);
-            if (property != null && property.CanRead)
-            {
-                return property.GetValue(obj);
-            }
-            return null;
-        }
-
     }
 
-    public class DynamicObject
-    {
-        public string FieldName { get; set; }
-        public string Text { get; set; }
-        public int PageNumber { get; set; }
-        public string Rectangle { get; set; }
-    }
 }

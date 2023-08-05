@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using System.Formats.Asn1;
 using System.Linq;
+using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text;
@@ -23,7 +24,7 @@ namespace TextExtraction.Services
         public async Task<TResponse?> GetAsync<TResponse>(string url)
         {
             var response = await _httpClient.GetAsync(url);
-            if (response is not null && response.IsSuccessStatusCode)
+            if (response is not null && response.StatusCode.Equals(HttpStatusCode.OK))
                 return await response!.Content!.ReadFromJsonAsync<TResponse>();
             logger.LogError("Getting error while calling {url}", url);
             return default;

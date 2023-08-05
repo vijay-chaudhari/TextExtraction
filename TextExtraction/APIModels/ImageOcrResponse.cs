@@ -6,7 +6,7 @@ using System.Threading.Tasks;
 
 namespace TextExtraction.APIModels
 {
-    internal class ImageOcrResponse
+    public class ImageOcrResponse
     {
         public DateTime creationTime { get; set; }
         public string creatorId { get; set; }

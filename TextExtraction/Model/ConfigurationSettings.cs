@@ -1,5 +1,4 @@
-﻿using com.sun.xml.@internal.bind.v2.model.core;
-using Microsoft.EntityFrameworkCore;
+﻿using Microsoft.EntityFrameworkCore;
 using System.ComponentModel.DataAnnotations;
 using Volo.Abp.Domain.Entities;
 using Volo.Abp.Domain.Entities.Auditing;
@@ -24,11 +23,9 @@ namespace TextExtraction.Model
         public string FieldName { get; set; }
         public string RegExpression { get; set; }
         public string CoOrdinates { get; set; }
-
-        public ConfigurationSettings ConfigurationSetting { get; set; } //Navigation Property
-
-        public FieldConfig(Guid id) : base(id) { }
-
+        public int PageNumber { get; set; }
+        public double Confidenece { get; set; }
+        public string Value { get; set; }
     }
 
     public class FieldValueModel

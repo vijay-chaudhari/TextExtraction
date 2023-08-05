@@ -1,5 +1,6 @@
 ﻿using edu.stanford.nlp.ie.crf;
 using NameRecognizer;
+using System.Drawing;
 using Tesseract;
 using TextExtraction.APIModels;
 using TextExtraction.Model;
@@ -15,44 +16,29 @@ namespace TextExtraction.Initialization
 
         public Initializer(ILogger<Initializer> logger, IConfiguration config, IAPIService service)
         {
-            this._logger = logger;
-            this._config = config;
-            this._service = service;
+            _logger = logger;
+            _config = config;
+            _service = service;
         }
 
-        public bool Initialize(ref CRFClassifier? crfClassifier, ref TesseractEngine? engine, ref ConfigurationSettings? template)
-        {
-            bool isInitialized;
-            (template, isInitialized) = GetTemplate();
-            if (!isInitialized) { return isInitialized; };
-
-            (crfClassifier, isInitialized) = InitNLP();
-            if (!isInitialized) { return isInitialized; };
-
-            (engine, isInitialized) = InitOCR();
-            if (!isInitialized) { return isInitialized; };
-
-            return isInitialized;
-        }
-        public (TesseractEngine?, bool) InitOCR()
+        public TesseractEngine? InitOCR()
         {
             TesseractEnviornment.CustomSearchPath = Environment.CurrentDirectory;
-            TesseractEngine? engine = null;
 
-            _logger.LogInformation("OCR engine Path :{path}", Directory.GetCurrentDirectory() + "\\tessdata");
+            _logger.LogInformation("OCR engine Path :{path}", Environment.CurrentDirectory + "\\tessdata");
             try
             {
-                engine = OCR.Image.LoadEnglishEngine(Directory.GetCurrentDirectory() + "\\tessdata");
+                TesseractEngine engine = OCR.Image.LoadEnglishEngine(Directory.GetCurrentDirectory() + "\\tessdata");
+                _logger.LogInformation("OCR Engine Initialize successfully on {time}", DateTimeOffset.Now);
+                return engine;
             }
             catch (Exception ex)
             {
                 _logger.LogError("OCR Engine Initialize failed.\n Exception : {ex}", ex);
-                return (engine, false);
+                return null;
             }
-            _logger.LogInformation("OCR Engine Initialize successfully on {time}", DateTimeOffset.Now);
-            return (engine, true);
         }
-        public (CRFClassifier?, bool) InitNLP()
+        public CRFClassifier? InitNLP()
         {
             bool extractPatientDetails = _config.GetValue<string>("ExtractPatientDetails").IsNullOrEmpty() ? false : System.Convert.ToBoolean(_config.GetValue<string>("ExtractPatientDetails"));
             if (extractPatientDetails)
@@ -62,39 +48,89 @@ namespace TextExtraction.Initialization
                 if (classifier is null)
                 {
                     _logger.LogError("NLP Engine Initialization failed - path: {path}", enginePath);
-                    return (classifier, false);
+                    return null;
                 }
                 _logger.LogInformation("NLP Engine Initialize successfully on {time}", DateTimeOffset.Now);
-                return (classifier, true);
+                return classifier;
             }
-            return (null, true);
+            return null;
         }
-        public (ConfigurationSettings?, bool) GetTemplate()
+        public ConfigurationSettings? GetConfiguredFields()
         {
-            ConfigurationSettings? template = null;
-            string temaplateId = _config.GetValue<string>("TemaplateId").IsNullOrEmpty() ? "" : _config.GetValue<string>("TemaplateId");
-            var request = new LoginRequest { UserNameOrEmailAddress = "serviceuser", Password = "1q2w3E*", RememberMe = true };
-            LoginResponse? result = _service.PostAsync<LoginRequest, LoginResponse?>("api/account/login", request).GetAwaiter().GetResult();
+            string? temaplateId = _config.GetValue<string>("TemaplateId").IsNullOrEmpty() ? "" : _config.GetValue<string>("TemaplateId");
 
-            if (result is not null && result.Description.Equals("Success"))
+            bool isLoggedIn = Login();
+            if (isLoggedIn)
             {
-                template = _service.GetAsync<ConfigurationSettings>($"api/app/config/{temaplateId}").GetAwaiter().GetResult();
+                ConfigurationSettings? template = _service.GetAsync<ConfigurationSettings>($"api/app/config/{temaplateId}").GetAwaiter().GetResult();
                 if (template is null)
                 {
                     _logger.LogError("No Template found for TemplateId {temaplateId}", temaplateId);
-                    return (template, false);
+                    return null;
                 }
                 else
                 {
                     _logger.LogInformation("Template recovered from API tamplate ID: {temaplateId}", temaplateId);
-                    return (template, true);
+                    return template;
                 }
+            }
+            return null;
+        }
+        public Registration? GetRegisterTemplate(string vendorId)
+        {
+            Registration registerTemplate = _service.GetAsync<Registration>($"api/app/registration/config-by-vendor-no?VendorNo={vendorId}").GetAwaiter().GetResult();
+            if (registerTemplate is null)
+            {
+                _logger.LogError("No Template found for Vendor {vendorId}", vendorId);
+                return null;
             }
             else
             {
-                _logger.LogError("Login API failed");
-                return (template, false);
+                _logger.LogInformation("Template recovered from API vendor : {vendorId}", vendorId);
+                return registerTemplate;
             }
+        }
+        public ImageOcrResponse? SaveOCRData(ImageOcr request)
+        {
+            ImageOcrResponse result = _service.PostAsync<ImageOcr, ImageOcrResponse?>("api/app/ocr", request).GetAwaiter().GetResult();
+            return result;
+        }
+
+        public NewFile? SentToRegistration(NewFile request)
+        {
+            bool isLoggedIn = Login();
+            if (isLoggedIn)
+            {
+                NewFile result = _service.PostAsync<NewFile, NewFile?>("api/app/registration", request).GetAwaiter().GetResult();
+                return result;
+            }
+            return null;
+        }
+
+        public string GetVendorID(string fileName)
+        {
+            VendorDetails vendor = _service.GetAsync<VendorDetails>($"/api/app/ocr/vendor?EmailSr={fileName}").GetAwaiter().GetResult();
+            if (vendor is null)
+            {
+                _logger.LogError("No VendorId found for file {file}", fileName);
+                return null;
+            }
+            else
+            {
+                _logger.LogInformation("VedorId for file {file} recovered from API vendor : {@vendor}", fileName, vendor);
+                return vendor.VendorId;
+            }
+        }
+        public bool Login()
+        {
+            var request = new LoginRequest { UserNameOrEmailAddress = "serviceuser", Password = "1q2w3E*", RememberMe = true };
+            LoginResponse? result = _service.PostAsync<LoginRequest, LoginResponse?>("api/account/login", request).GetAwaiter().GetResult();
+            if (result is not null && result.Description.Equals("Success"))
+            {
+                return true;
+            }
+            _logger.LogError("Login API failed");
+            return false;
         }
     }
 }
