@@ -16,6 +16,7 @@ namespace TextExtraction
                 .MinimumLevel.Debug()
                 .MinimumLevel.Override("Microsoft", Serilog.Events.LogEventLevel.Warning)
                 .Enrich.FromLogContext()
+                .WriteTo.Console()
                 .WriteTo.File(@"C:\temp\TextExtraction\log.txt", rollingInterval: RollingInterval.Day)
                 .CreateLogger();
 

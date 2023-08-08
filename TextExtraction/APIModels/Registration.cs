@@ -5,7 +5,7 @@
         public string OCRConfig { get; set; }
     }
 
-    public class Rootobject
+    public class RegisterdTemplate
     {
         public List<Additionalfield> AdditionalFields { get; set; }
     }

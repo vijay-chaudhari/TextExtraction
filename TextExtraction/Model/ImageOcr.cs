@@ -57,6 +57,7 @@ namespace TextExtraction.Model
     {
         public int CellNo { get; set; }
         public string Text { get; set; }
+        public string Rectangle { get; set; }
         public double Confidence { get; set; }
     }
     #endregion

@@ -29,13 +29,13 @@ namespace TextExtraction
         private string? _outputPath;
         private string? _pendingPath;
         private string? _ghostScriptPath;
-        public CRFClassifier? _crfClassifier;
-        private TesseractEngine? _engine;
+        private string _tempFolder = Directory.GetCurrentDirectory() + "\\Temp";
         private readonly ILogger<Worker> _logger;
         private readonly IConfiguration _config;
+        private bool _isUserLoggedIn;
         private Initializer _initializer;
-        private string _tempFolder = Directory.GetCurrentDirectory() + "\\Temp";
-        private bool _isUserLoggedIn { get; set; }
+        private TesseractEngine? _engine;
+        public CRFClassifier? _crfClassifier;
 
         public Worker(ILogger<Worker> logger, IConfiguration config, Initializer initializer)
         {
@@ -68,10 +68,9 @@ namespace TextExtraction
                     _logger.LogInformation("Service user logged in : {flag}", _isUserLoggedIn);
                     if (_engine is not null)
                         RunOcr(pdfFiles);
-
                 }
                 // Wait for 10 minute before checking the input folder again
-                await Task.Delay(TimeSpan.FromMinutes(10), stoppingToken);
+                await Task.Delay(TimeSpan.FromMinutes(5), stoppingToken);
             }
         }
 
@@ -79,26 +78,27 @@ namespace TextExtraction
         {
             foreach (var pdf in pdfFiles)
             {
+                double pageConfidence = 0;
+                int totalFields = 0;
                 string fileName = Path.GetFileName(pdf);
                 string fileNameWithoutExtension = Path.GetFileNameWithoutExtension(pdf);
                 var fileNumber = fileName.Split('_')[0];
 
                 if (!string.IsNullOrEmpty(fileNumber))
                 {
-
                     string vendorId = _initializer.GetVendorID(fileNumber);
-                    //string vendorId = GetVendorID(fileNumber);
                     if (string.IsNullOrEmpty(vendorId))
                     {
                         if (MoveFile(_inputPath, _pendingPath, fileName))
                         {
-                            _logger.LogInformation("{filename} move to {path} as no vendor id found.", fileName, _pendingPath);
-                            var request = new NewFile
+                            _logger.LogInformation("No vendor id found. File : {filename} move to location : {path}", fileName, _pendingPath);
+
+                            NewFile? resp = _initializer.SentToRegistration(new NewFile
                             {
                                 id = Guid.NewGuid(),
                                 filePath = Path.Combine(_pendingPath, fileName)
-                            };
-                            NewFile resp = _initializer.SentToRegistration(request);
+                            });
+
                             if (resp is not null)
                             {
                                 _logger.LogInformation("{FileName} sent for registration, Its Id is : {id} and created at : {time}", fileName, resp.id, resp.creationTime);
@@ -115,8 +115,26 @@ namespace TextExtraction
                     Registration? registration = _initializer.GetRegisterTemplate(vendorId);
                     if (registration is null)
                     {
+
                         if (MoveFile(_inputPath, _pendingPath, fileName))
-                            _logger.LogInformation("{filename} move to {path} as no template registered.", fileName, _pendingPath);
+                        {
+                            _logger.LogInformation("No registered template found, File: {filename} move to location : {path}", fileName, _pendingPath);
+
+                            NewFile? resp = _initializer.SentToRegistration(new NewFile
+                            {
+                                id = Guid.NewGuid(),
+                                filePath = Path.Combine(_pendingPath, fileName)
+                            });
+
+                            if (resp is not null)
+                            {
+                                _logger.LogInformation("{FileName} sent for registration, Its Id is : {id} and created at : {time}", fileName, resp.id, resp.creationTime);
+                            }
+                            else
+                            {
+                                _logger.LogError("Something is wrong with Registration API, Data is not saved, Check FaxVerification Sites logs for more details.");
+                            }
+                        }
                         continue;
                     }
                     var streams = Pdf_To_ImageStream.Convert.ToStreams(_ghostScriptPath, pdf);
@@ -126,7 +144,7 @@ namespace TextExtraction
                         TextExtractionFields textExtraction = new TextExtractionFields();
                         try
                         {
-                            var rootObj = JsonConvert.DeserializeObject<Rootobject>(registration.OCRConfig);
+                            var rootObj = JsonConvert.DeserializeObject<RegisterdTemplate>(registration.OCRConfig);
                             if (rootObj is not null)
                             {
                                 foreach (var item in rootObj.AdditionalFields)
@@ -149,29 +167,40 @@ namespace TextExtraction
                                         string tableImagePath = Path.Combine(_tempFolder, fileNameWithoutExtension + "_table.TIFF");
                                         CroppedImage.Save(imagePath);
                                         CroppedImage.Save(tableImagePath);
-                                        GetTable(textExtraction, imagePath, tableImagePath);
+                                        GetTable(textExtraction, imagePath, tableImagePath, pageConfidence, totalFields);
                                         continue;
                                     }
                                     using var image = Pix.LoadTiffFromMemory(streams[pno].ToArray());
                                     using var page = _engine.Process(image, rect);
-                                    textExtraction.Invoice.AdditionalFields.Add(
-                                                                                    new Field
-                                                                                    {
-                                                                                        FieldName = item.FieldName,
-                                                                                        Text = page.GetText().Trim(),
-                                                                                        PageNumber = item.PageNumber,
-                                                                                        Confidence = page.GetMeanConfidence() * 100,
-                                                                                        Rectangle = item.Rectangle
-                                                                                    });
+                                    double conf = page.GetMeanConfidence() * 100;
+                                    pageConfidence += conf;
+                                    totalFields++;
+                                    textExtraction.Invoice.AdditionalFields.Add(new Field
+                                    {
+                                        FieldName = item.FieldName,
+                                        Text = page.GetText().Trim(),
+                                        PageNumber = item.PageNumber,
+                                        Confidence = conf,
+                                        Rectangle = item.Rectangle
+                                    });
 
                                 }
                                 _logger.LogInformation("Data extraction is Completed..!");
                                 CopyToArchive(_inputPath, fileName);
 
+                                var request = new ImageOcr
+                                {
+                                    Confidence = $"{pageConfidence / totalFields}",
+                                    InputPath = Path.Combine(_inputPath, fileName),
+                                    OutputPath = Path.Combine(_outputPath, fileName),
+                                    OCRText = "",
+                                    Output = JsonConvert.SerializeObject(textExtraction)
+                                };
+
                                 bool testing = _config.GetValue<string>("Testing").IsNullOrEmpty() ? false : System.Convert.ToBoolean(_config.GetValue<string>("Testing"));
                                 if (testing)
                                 {
-                                    _logger.LogInformation("Output: {textExtraction}", JsonConvert.SerializeObject(textExtraction));
+                                    _logger.LogInformation("Output: {@textExtraction}", request);
                                     continue; ;
                                 }
 
@@ -179,14 +208,6 @@ namespace TextExtraction
                                 if (isMoved)
                                 {
                                     _logger.LogInformation("{filename} is processed and move to {path}", fileName, _outputPath);
-                                    var request = new ImageOcr
-                                    {
-                                        Confidence = "0",
-                                        InputPath = Path.Combine(_inputPath, fileName),
-                                        OutputPath = Path.Combine(_outputPath, fileName),
-                                        OCRText = "",
-                                        Output = JsonConvert.SerializeObject(textExtraction)
-                                    };
                                     ImageOcrResponse resp = _initializer.SaveOCRData(request);
                                     if (resp is not null)
                                     {
@@ -264,7 +285,7 @@ namespace TextExtraction
             }
         }
 
-        public void GetTable(TextExtractionFields textExtraction,string imagePath, string tableImagePath)
+        public void GetTable(TextExtractionFields textExtraction, string imagePath, string tableImagePath, double pageConfidence, double totalFields)
         {
             try
             {
@@ -277,6 +298,7 @@ namespace TextExtraction
                 CvInvoke.FindContours(binary, contours, null, RetrType.List, ChainApproxMethod.ChainApproxSimple);
                 int index = 0;
                 using var image = Pix.LoadFromFile(imagePath);
+
                 int loop = contours.Size - 1;
                 for (int k = loop; k > 0; k--) //for (int k = 0; k < contours.Size; k++)
                 {
@@ -285,18 +307,20 @@ namespace TextExtraction
                     {
                         var rect = CvInvoke.BoundingRectangle(contours[k]);
                         cells.Add(rect);
-                        Rect roi = new Rect(rect.X, rect.Y, rect.Width, rect.Height);
+                        Rect roi = new(rect.X, rect.Y, rect.Width, rect.Height);
                         using var page = _engine.Process(image, roi);
                         string txt = page.GetText().Trim();
-
+                        double conf = page.GetMeanConfidence() * 100;
+                        pageConfidence += conf;
+                        totalFields++;
                         if (txt.IsNullOrEmpty())
                         {
-                            textExtraction.Invoice.TableDetails.Cells.Add(new Cell { CellNo = index++, Text = string.Empty, Confidence = page.GetMeanConfidence() * 100 });
+                            textExtraction.Invoice.TableDetails.Cells.Add(new Cell { CellNo = index++, Text = string.Empty, Confidence = conf });
                             continue;
                         }
 
                         DrawRect(rect.X, rect.Y, rect.Width, rect.Height, index, tableImagePath);
-                        textExtraction.Invoice.TableDetails.Cells.Add(new Cell { CellNo = index++, Text = txt, Confidence = page.GetMeanConfidence() * 100 });
+                        textExtraction.Invoice.TableDetails.Cells.Add(new Cell { CellNo = index++, Text = txt, Rectangle = $"{rect.X}, {rect.Y}, {rect.Width}, {rect.Height}", Confidence = page.GetMeanConfidence() * 100 });
                     }
                 }
 
@@ -381,12 +405,12 @@ namespace TextExtraction
                     // Create a new Color object using the random RGB values
                     Color randomColor = Color.FromArgb(red, green, blue);
 
-                    float x1 = x - 30;
-                    float y1 = y+3;
+                    float x1 = x + 5;
+                    float y1 = y + 3;
                     using (Pen pen = new Pen(Color.DarkRed, 2))
                     {
                         graphics.DrawRectangle(pen, x, y, width, height);
-                        graphics.DrawString(index.ToString(), new System.Drawing.Font("Arial", 14,FontStyle.Bold), new SolidBrush(Color.DarkRed), x1, y1);
+                        graphics.DrawString(index.ToString(), new System.Drawing.Font("Arial", 14, FontStyle.Bold), new SolidBrush(Color.DarkRed), x1, y1);
                     }
 
                 }
